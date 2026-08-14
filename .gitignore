@@ -1,21 +1,77 @@
+# ==========================
 # Dependencies
+# ==========================
+
 node_modules/
 
-# Environment variables
+
+# ==========================
+# Environment Variables
+# ==========================
+
 .env
-.env.*
+.env.local
+.env.*.local
+
+# Keep example environment file
 !.env.example
 
-# Build output
-dist/
 
-# Firebase / Google Cloud secrets
-**/serviceAccountKey.json
+# ==========================
+# Build Output
+# ==========================
+
+dist/
+build/
+.next/
+.expo/
+
+
+# ==========================
+# Firebase / Google Cloud Secrets
+# ==========================
+
+keys/
 **/keys/
 
-# Logs
-*.log
+serviceAccountKey.json
+service-account.json
+**/serviceAccountKey.json
+**/service-account.json
 
-# OS files
+*.pem
+*.key
+
+
+# ==========================
+# Logs
+# ==========================
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+
+# ==========================
+# OS Files
+# ==========================
+
 .DS_Store
 Thumbs.db
+
+
+# ==========================
+# IDE
+# ==========================
+
+.vscode/
+.idea/
+
+
+# ==========================
+# Temporary Files
+# ==========================
+
+*.tmp
+*.temp
