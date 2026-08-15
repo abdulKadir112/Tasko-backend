@@ -15,12 +15,30 @@ export const updateProfileSchema = z.object({
     .trim()
     .optional(),
 
-  photoURL: z
-    .string()
-    .trim()
-    .url("Invalid profile image URL")
-    .optional()
-    .nullable(),
+  /**
+   * Profile image URL
+   *
+   * Frontend থেকে যদি:
+   * - valid Cloudinary URL আসে → accept
+   * - null আসে → accept
+   * - undefined আসে → accept
+   * - empty string "" আসে → null হিসেবে save হবে
+   */
+  photoURL: z.preprocess(
+    (value) => {
+      if (value === "") {
+        return null;
+      }
+
+      return value;
+    },
+    z
+      .string()
+      .trim()
+      .url("Invalid profile image URL")
+      .nullable()
+      .optional()
+  ),
 
   address: z
     .string()
@@ -48,13 +66,19 @@ export const updateProfileSchema = z.object({
   experience: z
     .coerce
     .number()
-    .min(0, "Experience cannot be negative")
+    .min(
+      0,
+      "Experience cannot be negative"
+    )
     .optional(),
 
   about: z
     .string()
     .trim()
-    .max(500, "About must be 500 characters or less")
+    .max(
+      500,
+      "About must be 500 characters or less"
+    )
     .optional(),
 });
 

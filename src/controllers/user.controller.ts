@@ -1,14 +1,17 @@
 import { Request, Response } from "express";
-import { db } from "../config/firebase";
-import { AuthRequest } from "../middleware/auth.middleware";
-import { updateProfileSchema } from "../validations/user.validation";
 
-/*
-=========================================================
-GET MY PROFILE
-GET /api/users/me
-=========================================================
-*/
+import { db } from "../config/firebase";
+
+import { AuthRequest } from "../middleware/auth.middleware";
+
+import {
+  updateProfileSchema,
+} from "../validations/user.validation";
+
+// =========================================================
+// GET MY PROFILE
+// GET /api/users/me
+// =========================================================
 
 export async function getMyProfile(
   req: AuthRequest,
@@ -22,6 +25,7 @@ export async function getMyProfile(
         success: false,
         message: "Unauthorized",
       });
+
       return;
     }
 
@@ -35,11 +39,13 @@ export async function getMyProfile(
         success: false,
         message: "User not found",
       });
+
       return;
     }
 
     res.json({
       success: true,
+
       data: {
         id: doc.id,
         ...doc.data(),
@@ -58,12 +64,10 @@ export async function getMyProfile(
   }
 }
 
-/*
-=========================================================
-UPDATE MY PROFILE
-PUT /api/users/me
-=========================================================
-*/
+// =========================================================
+// UPDATE MY PROFILE
+// PUT /api/users/me
+// =========================================================
 
 export async function updateMyProfile(
   req: AuthRequest,
@@ -72,13 +76,44 @@ export async function updateMyProfile(
   try {
     const uid = req.user?.uid;
 
+    // =======================================================
+    // AUTH CHECK
+    // =======================================================
+
     if (!uid) {
       res.status(401).json({
         success: false,
         message: "Unauthorized",
       });
+
       return;
     }
+
+    console.log(
+      "=========================================="
+    );
+
+    console.log(
+      "👤 UPDATE MY PROFILE"
+    );
+
+    console.log(
+      "🆔 UID:",
+      uid
+    );
+
+    console.log(
+      "📦 REQUEST BODY:",
+      req.body
+    );
+
+    console.log(
+      "=========================================="
+    );
+
+    // =======================================================
+    // VALIDATE REQUEST BODY
+    // =======================================================
 
     const result =
       updateProfileSchema.safeParse(
@@ -86,12 +121,24 @@ export async function updateMyProfile(
       );
 
     if (!result.success) {
+      console.error(
+        "❌ PROFILE VALIDATION ERROR:",
+        result.error.flatten()
+      );
+
       res.status(400).json({
         success: false,
-        errors: result.error.flatten(),
+
+        errors:
+          result.error.flatten(),
       });
+
       return;
     }
+
+    // =======================================================
+    // VALIDATED DATA
+    // =======================================================
 
     const {
       name,
@@ -105,6 +152,29 @@ export async function updateMyProfile(
       about,
     } = result.data;
 
+    console.log(
+      "✅ PROFILE VALIDATION SUCCESS"
+    );
+
+    console.log(
+      "👤 Name:",
+      name
+    );
+
+    console.log(
+      "📞 Phone:",
+      phone
+    );
+
+    console.log(
+      "🖼️ Photo URL:",
+      photoURL
+    );
+
+    // =======================================================
+    // UPDATE FIRESTORE
+    // =======================================================
+
     await db
       .collection("users")
       .doc(uid)
@@ -112,19 +182,40 @@ export async function updateMyProfile(
         {
           name,
           phone,
-          photoURL,
+
+          /**
+           * Cloudinary profile image URL
+           *
+           * Valid URL → save
+           * null → remove image
+           */
+          photoURL:
+            photoURL ?? null,
+
           address,
           city,
+
+          // Worker fields
           category,
           skills,
           experience,
           about,
-          updatedAt: new Date(),
+
+          updatedAt:
+            new Date(),
         },
         {
           merge: true,
         }
       );
+
+    console.log(
+      "✅ FIRESTORE PROFILE UPDATED"
+    );
+
+    // =======================================================
+    // GET UPDATED USER
+    // =======================================================
 
     const updatedUser =
       await db
@@ -132,36 +223,61 @@ export async function updateMyProfile(
         .doc(uid)
         .get();
 
+    if (!updatedUser.exists) {
+      res.status(404).json({
+        success: false,
+        message:
+          "Updated user not found",
+      });
+
+      return;
+    }
+
+    // =======================================================
+    // RESPONSE
+    // =======================================================
+
     res.json({
       success: true,
+
       message:
         "Profile Updated Successfully",
+
       data: {
         id: updatedUser.id,
         ...updatedUser.data(),
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
-      "❌ Update Profile Error:",
+      "❌ Update Profile Error:"
+    );
+
+    console.error(
+      "Message:",
+      error?.message
+    );
+
+    console.error(
+      "Error:",
       error
     );
 
     res.status(500).json({
       success: false,
+
       message:
         "Profile Update Failed",
     });
   }
 }
 
-/*
-=========================================================
-GET ALL WORKERS
-GET /api/users/workers
-GET /api/users/workers?category=plumbing
-=========================================================
-*/
+// =========================================================
+// GET ALL WORKERS
+// GET /api/users/workers
+//
+// GET /api/users/workers?category=plumbing
+// =========================================================
 
 export async function getWorkers(
   req: Request,
@@ -171,7 +287,8 @@ export async function getWorkers(
     const category =
       req.query.category as string;
 
-    let query: FirebaseFirestore.Query =
+    let query:
+      FirebaseFirestore.Query =
       db
         .collection("users")
         .where(
@@ -179,6 +296,10 @@ export async function getWorkers(
           "==",
           "worker"
         );
+
+    // =======================================================
+    // CATEGORY FILTER
+    // =======================================================
 
     if (category) {
       query = query.where(
@@ -188,6 +309,10 @@ export async function getWorkers(
       );
     }
 
+    // =======================================================
+    // ORDER BY RATING
+    // =======================================================
+
     const snapshot =
       await query
         .orderBy(
@@ -196,56 +321,82 @@ export async function getWorkers(
         )
         .get();
 
+    // =======================================================
+    // FORMAT WORKERS
+    // =======================================================
+
     const workers =
-      snapshot.docs.map((doc) => {
-        const data =
-          doc.data();
+      snapshot.docs.map(
+        (doc) => {
+          const data =
+            doc.data();
 
-        return {
-          id: doc.id,
+          return {
+            id: doc.id,
 
-          name:
-            data.name ?? "Unknown",
+            name:
+              data.name ??
+              "Unknown",
 
-          email:
-            data.email ?? null,
+            email:
+              data.email ??
+              null,
 
-          phone:
-            data.phone ?? null,
+            phone:
+              data.phone ??
+              null,
 
-          photoURL:
-            data.photoURL ?? null,
+            photoURL:
+              data.photoURL ??
+              null,
 
-          city:
-            data.city ?? null,
+            city:
+              data.city ??
+              null,
 
-          category:
-            data.category ?? null,
+            category:
+              data.category ??
+              null,
 
-          skills:
-            data.skills ?? [],
+            skills:
+              data.skills ??
+              [],
 
-          experience:
-            data.experience ?? null,
+            experience:
+              data.experience ??
+              null,
 
-          rating:
-            data.rating ?? 0,
+            rating:
+              data.rating ??
+              0,
 
-          completedJobs:
-            data.completedJobs ?? 0,
+            completedJobs:
+              data.completedJobs ??
+              0,
 
-          totalJobs:
-            data.totalJobs ?? 0,
+            totalJobs:
+              data.totalJobs ??
+              0,
 
-          isOnline:
-            data.isOnline ?? false,
-        };
-      });
+            isOnline:
+              data.isOnline ??
+              false,
+          };
+        }
+      );
+
+    // =======================================================
+    // RESPONSE
+    // =======================================================
 
     res.json({
       success: true,
-      total: workers.length,
-      data: workers,
+
+      total:
+        workers.length,
+
+      data:
+        workers,
     });
   } catch (error) {
     console.error(
@@ -255,20 +406,17 @@ export async function getWorkers(
 
     res.status(500).json({
       success: false,
+
       message:
         "Failed to fetch workers",
     });
   }
 }
 
-/*
-=========================================================
-GET WORKER BY ID
-GET /api/users/workers/:id
-
-শুধু Worker profile-এর জন্য।
-=========================================================
-*/
+// =========================================================
+// GET WORKER BY ID
+// GET /api/users/workers/:id
+// =========================================================
 
 export async function getWorkerById(
   req: Request,
@@ -278,13 +426,22 @@ export async function getWorkerById(
     const id =
       req.params.id as string;
 
+    // =======================================================
+    // ID CHECK
+    // =======================================================
+
     if (!id) {
       return res.status(400).json({
         success: false,
+
         message:
           "Worker id is required",
       });
     }
+
+    // =======================================================
+    // GET FIRESTORE USER
+    // =======================================================
 
     const doc =
       await db
@@ -292,9 +449,14 @@ export async function getWorkerById(
         .doc(id)
         .get();
 
+    // =======================================================
+    // USER NOT FOUND
+    // =======================================================
+
     if (!doc.exists) {
       return res.status(404).json({
         success: false,
+
         message:
           "Worker not found",
       });
@@ -303,16 +465,25 @@ export async function getWorkerById(
     const worker =
       doc.data();
 
+    // =======================================================
+    // ROLE CHECK
+    // =======================================================
+
     if (
       worker?.role !==
       "worker"
     ) {
       return res.status(404).json({
         success: false,
+
         message:
           "Worker not found",
       });
     }
+
+    // =======================================================
+    // WORKER DATA
+    // =======================================================
 
     const workerData = {
       id: doc.id,
@@ -370,9 +541,15 @@ export async function getWorkerById(
         null,
     };
 
+    // =======================================================
+    // RESPONSE
+    // =======================================================
+
     return res.json({
       success: true,
-      data: workerData,
+
+      data:
+        workerData,
     });
   } catch (error) {
     console.error(
@@ -382,42 +559,19 @@ export async function getWorkerById(
 
     res.status(500).json({
       success: false,
+
       message:
         "Failed to fetch worker",
     });
   }
 }
 
-/*
-=========================================================
-GET ANY USER BY UID
-GET /api/users/:uid
-
-IMPORTANT:
-
-এই API Customer এবং Worker
-দুই ধরনের user-এর জন্য কাজ করবে।
-
-Chat Room:
-Customer → Worker
-Worker → Customer
-
-শুধু Chat Header-এর জন্য প্রয়োজনীয়
-profile information পাঠানো হবে।
-
-Response:
-
-{
-  success: true,
-  data: {
-    id,
-    name,
-    photoURL,
-    isOnline
-  }
-}
-=========================================================
-*/
+// =========================================================
+// GET ANY USER BY UID
+// GET /api/users/:uid
+//
+// Customer অথবা Worker
+// =========================================================
 
 export async function getUserById(
   req: Request,
@@ -427,9 +581,14 @@ export async function getUserById(
     const uid =
       req.params.uid as string;
 
+    // =======================================================
+    // UID CHECK
+    // =======================================================
+
     if (!uid) {
       return res.status(400).json({
         success: false,
+
         message:
           "User ID is required",
       });
@@ -440,11 +599,19 @@ export async function getUserById(
       uid
     );
 
+    // =======================================================
+    // GET USER
+    // =======================================================
+
     const doc =
       await db
         .collection("users")
         .doc(uid)
         .get();
+
+    // =======================================================
+    // USER NOT FOUND
+    // =======================================================
 
     if (!doc.exists) {
       console.log(
@@ -454,6 +621,7 @@ export async function getUserById(
 
       return res.status(404).json({
         success: false,
+
         message:
           "User not found",
       });
@@ -466,6 +634,10 @@ export async function getUserById(
       "✅ User found:",
       uid
     );
+
+    // =======================================================
+    // RESPONSE
+    // =======================================================
 
     return res.json({
       success: true,
@@ -494,6 +666,7 @@ export async function getUserById(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Failed to fetch user",
     });
