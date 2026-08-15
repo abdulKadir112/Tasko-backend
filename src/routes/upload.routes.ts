@@ -12,7 +12,10 @@ import {
 const router = Router();
 
 /**
- * Upload Image
+ * =========================================================
+ * IMAGE UPLOAD
+ * POST /api/upload/image
+ * =========================================================
  */
 router.post(
   "/image",
@@ -22,7 +25,10 @@ router.post(
 );
 
 /**
- * Upload Voice
+ * =========================================================
+ * VOICE UPLOAD
+ * POST /api/upload/voice
+ * =========================================================
  */
 router.post(
   "/voice",
@@ -32,7 +38,10 @@ router.post(
 );
 
 /**
- * Upload Document
+ * =========================================================
+ * DOCUMENT UPLOAD
+ * POST /api/upload/document
+ * =========================================================
  */
 router.post(
   "/document",

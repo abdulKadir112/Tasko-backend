@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 export const updateProfileSchema = z.object({
-  // Common
+  // =========================================================
+  // COMMON PROFILE
+  // =========================================================
+
   name: z
     .string()
     .trim()
@@ -9,38 +12,49 @@ export const updateProfileSchema = z.object({
 
   phone: z
     .string()
+    .trim()
     .optional(),
 
   photoURL: z
     .string()
-    .url()
-    .optional(),
+    .trim()
+    .url("Invalid profile image URL")
+    .optional()
+    .nullable(),
 
   address: z
     .string()
+    .trim()
     .optional(),
 
   city: z
     .string()
+    .trim()
     .optional(),
 
-  // Worker Profile
+  // =========================================================
+  // WORKER PROFILE
+  // =========================================================
+
   category: z
     .string()
+    .trim()
     .optional(),
 
   skills: z
     .array(z.string())
     .optional(),
 
-  experience: z.coerce
+  experience: z
+    .coerce
     .number()
-    .min(0)
+    .min(0, "Experience cannot be negative")
     .optional(),
 
   about: z
     .string()
-    .max(500)
+    .trim()
+    .max(500, "About must be 500 characters or less")
     .optional(),
 });
 
