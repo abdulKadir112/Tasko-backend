@@ -16,7 +16,7 @@ import {
 export async function getMyProfile(
   req: AuthRequest,
   res: Response
-) {
+): Promise<void> {
   try {
     const uid = req.user?.uid;
 
@@ -72,13 +72,9 @@ export async function getMyProfile(
 export async function updateMyProfile(
   req: AuthRequest,
   res: Response
-) {
+): Promise<void> {
   try {
     const uid = req.user?.uid;
-
-    // =======================================================
-    // AUTH CHECK
-    // =======================================================
 
     if (!uid) {
       res.status(401).json({
@@ -111,10 +107,6 @@ export async function updateMyProfile(
       "=========================================="
     );
 
-    // =======================================================
-    // VALIDATE REQUEST BODY
-    // =======================================================
-
     const result =
       updateProfileSchema.safeParse(
         req.body
@@ -135,10 +127,6 @@ export async function updateMyProfile(
 
       return;
     }
-
-    // =======================================================
-    // VALIDATED DATA
-    // =======================================================
 
     const {
       name,
@@ -171,10 +159,6 @@ export async function updateMyProfile(
       photoURL
     );
 
-    // =======================================================
-    // UPDATE FIRESTORE
-    // =======================================================
-
     await db
       .collection("users")
       .doc(uid)
@@ -183,19 +167,12 @@ export async function updateMyProfile(
           name,
           phone,
 
-          /**
-           * Cloudinary profile image URL
-           *
-           * Valid URL → save
-           * null → remove image
-           */
           photoURL:
             photoURL ?? null,
 
           address,
           city,
 
-          // Worker fields
           category,
           skills,
           experience,
@@ -213,10 +190,6 @@ export async function updateMyProfile(
       "✅ FIRESTORE PROFILE UPDATED"
     );
 
-    // =======================================================
-    // GET UPDATED USER
-    // =======================================================
-
     const updatedUser =
       await db
         .collection("users")
@@ -232,10 +205,6 @@ export async function updateMyProfile(
 
       return;
     }
-
-    // =======================================================
-    // RESPONSE
-    // =======================================================
 
     res.json({
       success: true,
@@ -282,13 +251,12 @@ export async function updateMyProfile(
 export async function getWorkers(
   req: Request,
   res: Response
-) {
+): Promise<void> {
   try {
     const category =
       req.query.category as string;
 
-    let query:
-      FirebaseFirestore.Query =
+    let query =
       db
         .collection("users")
         .where(
@@ -296,10 +264,6 @@ export async function getWorkers(
           "==",
           "worker"
         );
-
-    // =======================================================
-    // CATEGORY FILTER
-    // =======================================================
 
     if (category) {
       query = query.where(
@@ -309,21 +273,10 @@ export async function getWorkers(
       );
     }
 
-    // =======================================================
-    // ORDER BY RATING
-    // =======================================================
-
+    // orderBy বাদ দেওয়া হয়েছে — composite index এড়ানোর জন্য।
+    // rating অনুযায়ী sort নিচে JS তে করা হচ্ছে।
     const snapshot =
-      await query
-        .orderBy(
-          "rating",
-          "desc"
-        )
-        .get();
-
-    // =======================================================
-    // FORMAT WORKERS
-    // =======================================================
+      await query.get();
 
     const workers =
       snapshot.docs.map(
@@ -385,9 +338,9 @@ export async function getWorkers(
         }
       );
 
-    // =======================================================
-    // RESPONSE
-    // =======================================================
+    workers.sort(
+      (a, b) => (b.rating ?? 0) - (a.rating ?? 0)
+    );
 
     res.json({
       success: true,
@@ -421,27 +374,21 @@ export async function getWorkers(
 export async function getWorkerById(
   req: Request,
   res: Response
-) {
+): Promise<void> {
   try {
     const id =
       req.params.id as string;
 
-    // =======================================================
-    // ID CHECK
-    // =======================================================
-
     if (!id) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
 
         message:
           "Worker id is required",
       });
-    }
 
-    // =======================================================
-    // GET FIRESTORE USER
-    // =======================================================
+      return;
+    }
 
     const doc =
       await db
@@ -449,41 +396,33 @@ export async function getWorkerById(
         .doc(id)
         .get();
 
-    // =======================================================
-    // USER NOT FOUND
-    // =======================================================
-
     if (!doc.exists) {
-      return res.status(404).json({
+      res.status(404).json({
         success: false,
 
         message:
           "Worker not found",
       });
+
+      return;
     }
 
     const worker =
       doc.data();
 
-    // =======================================================
-    // ROLE CHECK
-    // =======================================================
-
     if (
       worker?.role !==
       "worker"
     ) {
-      return res.status(404).json({
+      res.status(404).json({
         success: false,
 
         message:
           "Worker not found",
       });
-    }
 
-    // =======================================================
-    // WORKER DATA
-    // =======================================================
+      return;
+    }
 
     const workerData = {
       id: doc.id,
@@ -541,11 +480,7 @@ export async function getWorkerById(
         null,
     };
 
-    // =======================================================
-    // RESPONSE
-    // =======================================================
-
-    return res.json({
+    res.json({
       success: true,
 
       data:
@@ -576,22 +511,20 @@ export async function getWorkerById(
 export async function getUserById(
   req: Request,
   res: Response
-) {
+): Promise<void> {
   try {
     const uid =
       req.params.uid as string;
 
-    // =======================================================
-    // UID CHECK
-    // =======================================================
-
     if (!uid) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
 
         message:
           "User ID is required",
       });
+
+      return;
     }
 
     console.log(
@@ -599,19 +532,11 @@ export async function getUserById(
       uid
     );
 
-    // =======================================================
-    // GET USER
-    // =======================================================
-
     const doc =
       await db
         .collection("users")
         .doc(uid)
         .get();
-
-    // =======================================================
-    // USER NOT FOUND
-    // =======================================================
 
     if (!doc.exists) {
       console.log(
@@ -619,12 +544,14 @@ export async function getUserById(
         uid
       );
 
-      return res.status(404).json({
+      res.status(404).json({
         success: false,
 
         message:
           "User not found",
       });
+
+      return;
     }
 
     const user =
@@ -635,11 +562,7 @@ export async function getUserById(
       uid
     );
 
-    // =======================================================
-    // RESPONSE
-    // =======================================================
-
-    return res.json({
+    res.json({
       success: true,
 
       data: {
@@ -664,7 +587,7 @@ export async function getUserById(
       error
     );
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
 
       message:
