@@ -1,68 +1,123 @@
 import { z } from "zod";
 
-export const updateProfileSchema = z.object({
-  // =========================================================
-  // COMMON PROFILE
-  // =========================================================
+/**
+ * =========================================================
+ * UPDATE PROFILE SCHEMA
+ *
+ * PUT /api/users/me
+ *
+ * সব field optional কারণ profile update
+ * partial update হিসেবে কাজ করবে।
+ * =========================================================
+ */
 
-  name: z
-    .string()
-    .trim()
-    .min(3, "Name must be at least 3 characters"),
+export const updateProfileSchema =
+  z.object({
+    // =======================================================
+    // COMMON PROFILE
+    // =======================================================
 
-  phone: z.string().trim().optional(),
-
-  /**
-   * Profile image URL
-   * - valid URL → accept
-   * - null / undefined → accept
-   * - "" → null
-   */
-  photoURL: z.preprocess(
-    (value) => {
-      if (value === "") {
-        return null;
-      }
-      return value;
-    },
-    z
+    name: z
       .string()
       .trim()
-      .url("Invalid profile image URL")
-      .nullable()
-      .optional()
-  ),
+      .min(
+        3,
+        "Name must be at least 3 characters"
+      )
+      .optional(),
 
-  address: z.string().trim().optional(),
+    phone: z
+      .string()
+      .trim()
+      .optional(),
 
-  city: z.string().trim().optional(),
+    /**
+     * Profile image URL
+     *
+     * "" → null
+     * valid URL → accept
+     * null → accept
+     * undefined → accept
+     */
+    photoURL: z.preprocess(
+      (value) => {
+        if (value === "") {
+          return null;
+        }
 
-  // =========================================================
-  // WORKER PROFILE
-  // =========================================================
+        return value;
+      },
+      z
+        .string()
+        .trim()
+        .url(
+          "Invalid profile image URL"
+        )
+        .nullable()
+        .optional()
+    ),
 
-  category: z.string().trim().optional(),
+    address: z
+      .string()
+      .trim()
+      .optional(),
 
-  skills: z.array(z.string()).optional(),
+    city: z
+      .string()
+      .trim()
+      .optional(),
 
-  experience: z.coerce
-    .number()
-    .min(0, "Experience cannot be negative")
-    .optional(),
+    // =======================================================
+    // WORKER PROFILE
+    // =======================================================
 
-  about: z
-    .string()
-    .trim()
-    .max(500, "About must be 500 characters or less")
-    .optional(),
+    category: z
+      .string()
+      .trim()
+      .optional(),
 
-  // =========================================================
-  // LOCATION (Worker + optional Customer)
-  // =========================================================
+    skills: z
+      .array(z.string())
+      .optional(),
 
-  lat: z.coerce.number().min(-90).max(90).optional(),
+    experience: z
+      .coerce
+      .number()
+      .min(
+        0,
+        "Experience cannot be negative"
+      )
+      .optional(),
 
-  lng: z.coerce.number().min(-180).max(180).optional(),
-});
+    about: z
+      .string()
+      .trim()
+      .max(
+        500,
+        "About must be 500 characters or less"
+      )
+      .optional(),
 
-export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+    // =======================================================
+    // LOCATION
+    // =======================================================
+
+    lat: z
+      .coerce
+      .number()
+      .min(-90)
+      .max(90)
+      .optional(),
+
+    lng: z
+      .coerce
+      .number()
+      .min(-180)
+      .max(180)
+      .optional(),
+  });
+
+export type UpdateProfileInput =
+  z.infer<
+    typeof updateProfileSchema
+  >;

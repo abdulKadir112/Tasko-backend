@@ -73,13 +73,25 @@ export async function updateMyProfile(
       return;
     }
 
-    console.log("==========================================");
-    console.log("👤 UPDATE MY PROFILE");
+    console.log(
+      "=========================================="
+    );
+    console.log(
+      "👤 UPDATE MY PROFILE"
+    );
     console.log("🆔 UID:", uid);
-    console.log("📦 REQUEST BODY:", req.body);
-    console.log("==========================================");
+    console.log(
+      "📦 REQUEST BODY:",
+      req.body
+    );
+    console.log(
+      "=========================================="
+    );
 
-    const result = updateProfileSchema.safeParse(req.body);
+    const result =
+      updateProfileSchema.safeParse(
+        req.body
+      );
 
     if (!result.success) {
       console.error(
@@ -89,83 +101,215 @@ export async function updateMyProfile(
 
       res.status(400).json({
         success: false,
-        errors: result.error.flatten(),
+        errors:
+          result.error.flatten(),
       });
+
       return;
     }
 
-    const {
-      name,
-      phone,
-      photoURL,
-      address,
-      city,
-      category,
-      skills,
-      experience,
-      about,
-      lat,
-      lng,
-    } = result.data;
+    const data = result.data;
 
-    console.log("✅ PROFILE VALIDATION SUCCESS");
-    console.log("👤 Name:", name);
-    console.log("📞 Phone:", phone);
-    console.log("🖼️ Photo URL:", photoURL);
-    console.log("📍 Lat/Lng:", lat, lng);
+    console.log(
+      "✅ PROFILE VALIDATION SUCCESS"
+    );
 
-    const payload: Record<string, any> = {
-      name,
-      phone,
-      photoURL: photoURL ?? null,
-      address,
-      city,
-      category,
-      skills,
-      experience,
-      about,
+    /**
+     * =====================================================
+     * PARTIAL UPDATE PAYLOAD
+     *
+     * শুধু যেসব field request-এ এসেছে,
+     * সেগুলোই Firestore-এ update হবে।
+     * =====================================================
+     */
+
+    const payload: Record<
+      string,
+      any
+    > = {
       updatedAt: new Date(),
     };
 
-    // Location update (only when provided)
-    if (typeof lat === "number" && typeof lng === "number") {
-      payload.lat = lat;
-      payload.lng = lng;
-      payload.locationUpdatedAt = new Date();
+    // =====================================================
+    // COMMON PROFILE
+    // =====================================================
+
+    if (
+      data.name !== undefined
+    ) {
+      payload.name = data.name;
     }
 
-    await db.collection("users").doc(uid).set(payload, {
-      merge: true,
-    });
+    if (
+      data.phone !== undefined
+    ) {
+      payload.phone = data.phone;
+    }
 
-    console.log("✅ FIRESTORE PROFILE UPDATED");
+    if (
+      data.photoURL !== undefined
+    ) {
+      payload.photoURL =
+        data.photoURL;
+    }
 
-    const updatedUser = await db.collection("users").doc(uid).get();
+    if (
+      data.address !== undefined
+    ) {
+      payload.address =
+        data.address;
+    }
+
+    if (
+      data.city !== undefined
+    ) {
+      payload.city =
+        data.city;
+    }
+
+    // =====================================================
+    // WORKER PROFILE
+    // =====================================================
+
+    if (
+      data.category !== undefined
+    ) {
+      payload.category =
+        data.category;
+    }
+
+    if (
+      data.skills !== undefined
+    ) {
+      payload.skills =
+        data.skills;
+    }
+
+    if (
+      data.experience !== undefined
+    ) {
+      payload.experience =
+        data.experience;
+    }
+
+    if (
+      data.about !== undefined
+    ) {
+      payload.about =
+        data.about;
+    }
+
+    // =====================================================
+    // LOCATION
+    // =====================================================
+
+    if (
+      data.lat !== undefined
+    ) {
+      payload.lat = data.lat;
+    }
+
+    if (
+      data.lng !== undefined
+    ) {
+      payload.lng = data.lng;
+    }
+
+    /**
+     * lat + lng দুটোই থাকলে locationUpdatedAt update হবে।
+     */
+    if (
+      data.lat !== undefined &&
+      data.lng !== undefined
+    ) {
+      payload.locationUpdatedAt =
+        new Date();
+
+      console.log(
+        "📍 LOCATION UPDATE:",
+        {
+          lat: data.lat,
+          lng: data.lng,
+        }
+      );
+    }
+
+    console.log(
+      "📦 FIRESTORE PAYLOAD:",
+      payload
+    );
+
+    // =====================================================
+    // FIRESTORE UPDATE
+    // =====================================================
+
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        payload,
+        {
+          merge: true,
+        }
+      );
+
+    console.log(
+      "✅ FIRESTORE PROFILE UPDATED"
+    );
+
+    // =====================================================
+    // GET UPDATED USER
+    // =====================================================
+
+    const updatedUser =
+      await db
+        .collection("users")
+        .doc(uid)
+        .get();
 
     if (!updatedUser.exists) {
       res.status(404).json({
         success: false,
-        message: "Updated user not found",
+        message:
+          "Updated user not found",
       });
+
       return;
     }
 
+    // =====================================================
+    // RESPONSE
+    // =====================================================
+
     res.json({
       success: true,
-      message: "Profile Updated Successfully",
+      message:
+        "Profile Updated Successfully",
+
       data: {
         id: updatedUser.id,
         ...updatedUser.data(),
       },
     });
   } catch (error: any) {
-    console.error("❌ Update Profile Error:");
-    console.error("Message:", error?.message);
-    console.error("Error:", error);
+    console.error(
+      "❌ Update Profile Error:"
+    );
+
+    console.error(
+      "Message:",
+      error?.message
+    );
+
+    console.error(
+      "Error:",
+      error
+    );
 
     res.status(500).json({
       success: false,
-      message: "Profile Update Failed",
+      message:
+        "Profile Update Failed",
     });
   }
 }
