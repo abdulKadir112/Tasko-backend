@@ -3,6 +3,10 @@ import { db } from "../config/firebase";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { createJobSchema } from "../validations/job.validation";
 
+/* =========================================================
+   CREATE JOB
+========================================================= */
+
 export async function createJob(
   req: AuthRequest,
   res: Response
@@ -15,24 +19,27 @@ export async function createJob(
     const uid = req.user?.uid;
 
     if (!uid) {
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         message: "Unauthorized",
       });
-      return;
     }
 
     console.log("STEP 1 - Auth OK");
 
     const result = createJobSchema.safeParse(req.body);
 
-    console.log("STEP 2 - Validation", result.success);
+    console.log("STEP 2 - Validation =", result.success);
 
     if (!result.success) {
-      console.log(result.error.flatten());
+      console.log(
+        "VALIDATION ERROR =",
+        result.error.flatten()
+      );
 
       return res.status(400).json({
         success: false,
+        message: "Validation failed",
         errors: result.error.flatten(),
       });
     }
@@ -45,31 +52,65 @@ export async function createJob(
       budget,
       address,
       city,
+      phone,
       image,
+      urgency,
     } = result.data;
+
+    const now = new Date();
 
     const job = {
       customerId: uid,
-      ...(workerId ? { workerId } : {}),
+
+      ...(workerId
+        ? {
+            workerId,
+          }
+        : {}),
+
       category,
       title,
       description,
       budget,
       address,
       city,
-      image: image || "",
+
+      ...(phone
+        ? {
+            phone,
+          }
+        : {}),
+
+      ...(image
+        ? {
+            image,
+          }
+        : {
+            image: "",
+          }),
+
+      urgency: urgency || "normal",
+
       status: "pending",
+
       totalBids: 0,
       totalViews: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+
+      createdAt: now,
+      updatedAt: now,
     };
 
     console.log("STEP 3 - Creating Job");
+    console.log("JOB DATA =", job);
 
-    const docRef = await db.collection("jobs").add(job);
+    const docRef = await db
+      .collection("jobs")
+      .add(job);
 
-    console.log("STEP 4 - Saved", docRef.id);
+    console.log(
+      "STEP 4 - Saved Job ID =",
+      docRef.id
+    );
 
     return res.status(201).json({
       success: true,
@@ -80,52 +121,81 @@ export async function createJob(
       },
     });
   } catch (error: any) {
-    console.error("CREATE JOB ERROR =>", error);
+    console.error(
+      "CREATE JOB ERROR =>",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: error.message,
+      message:
+        error?.message ||
+        "Failed to create job",
     });
   }
 }
+
+/* =========================================================
+   GET ALL JOBS
+========================================================= */
 
 export async function getJobs(
   req: AuthRequest,
   res: Response
 ) {
   try {
-    const snapshot = await db.collection("jobs").get();
+    const snapshot = await db
+      .collection("jobs")
+      .get();
 
     const jobs = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
-    res.json({
+    return res.json({
       success: true,
+      total: jobs.length,
       data: jobs,
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "GET JOBS ERROR =",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
     });
   }
 }
 
+/* =========================================================
+   GET JOB BY ID
+========================================================= */
+
 export async function getJobById(
   req: AuthRequest,
   res: Response
 ) {
   try {
-    const id = req.params.id as string;
+    const id = String(req.params.id || "").trim();
 
-    const docRef = db.collection("jobs").doc(id);
-    const doc = await docRef.get();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Job ID is required",
+      });
+    }
 
-    if (!doc.exists) {
+    const jobRef = db
+      .collection("jobs")
+      .doc(id);
+
+    const jobDoc = await jobRef.get();
+
+    if (!jobDoc.exists) {
       return res.status(404).json({
         success: false,
         message: "Job not found",
@@ -134,10 +204,15 @@ export async function getJobById(
 
     const uid = req.user?.uid;
 
+    /*
+     * Count unique view for logged-in user.
+     */
     if (uid) {
       const viewId = `${id}_${uid}`;
 
-      const viewRef = db.collection("job_views").doc(viewId);
+      const viewRef = db
+        .collection("job_views")
+        .doc(viewId);
 
       const viewed = await viewRef.get();
 
@@ -148,23 +223,39 @@ export async function getJobById(
           createdAt: new Date(),
         });
 
-        await docRef.update({
-          totalViews: (doc.data()?.totalViews || 0) + 1,
+        const currentData =
+          jobDoc.data() || {};
+
+        const currentViews =
+          Number(
+            currentData.totalViews || 0
+          );
+
+        await jobRef.update({
+          totalViews: currentViews + 1,
         });
       }
     }
 
-    const updated = await docRef.get();
+    /*
+     * Fetch latest version after
+     * possible view update.
+     */
+    const updatedDoc =
+      await jobRef.get();
 
     return res.json({
       success: true,
       data: {
-        id: updated.id,
-        ...updated.data(),
+        id: updatedDoc.id,
+        ...updatedDoc.data(),
       },
     });
   } catch (error) {
-    console.log(error);
+    console.error(
+      "GET JOB BY ID ERROR =",
+      error
+    );
 
     return res.status(500).json({
       success: false,
@@ -172,6 +263,10 @@ export async function getJobById(
     });
   }
 }
+
+/* =========================================================
+   ADD JOB VIEW
+========================================================= */
 
 export async function addJobView(
   req: AuthRequest,
@@ -187,8 +282,19 @@ export async function addJobView(
       });
     }
 
-    const id = req.params.id as string;
-    const jobRef = db.collection("jobs").doc(id);
+    const id = String(req.params.id || "").trim();
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Job ID is required",
+      });
+    }
+
+    const jobRef = db
+      .collection("jobs")
+      .doc(id);
+
     const jobDoc = await jobRef.get();
 
     if (!jobDoc.exists) {
@@ -198,9 +304,11 @@ export async function addJobView(
       });
     }
 
+    const viewId = `${id}_${uid}`;
+
     const viewRef = db
       .collection("job_views")
-      .doc(`${id}_${uid}`);
+      .doc(viewId);
 
     const viewed = await viewRef.get();
 
@@ -211,17 +319,26 @@ export async function addJobView(
         createdAt: new Date(),
       });
 
+      const data =
+        jobDoc.data() || {};
+
+      const currentViews =
+        Number(data.totalViews || 0);
+
       await jobRef.update({
-        totalViews:
-          (jobDoc.data()?.totalViews || 0) + 1,
+        totalViews: currentViews + 1,
       });
     }
 
     return res.json({
       success: true,
+      message: "View updated",
     });
   } catch (error) {
-    console.log(error);
+    console.error(
+      "ADD JOB VIEW ERROR =",
+      error
+    );
 
     return res.status(500).json({
       success: false,
@@ -229,6 +346,10 @@ export async function addJobView(
     });
   }
 }
+
+/* =========================================================
+   UPDATE JOB
+========================================================= */
 
 export async function updateJob(
   req: AuthRequest,
@@ -238,59 +359,188 @@ export async function updateJob(
     const uid = req.user?.uid;
 
     if (!uid) {
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         message: "Unauthorized",
       });
-      return;
     }
 
-    const id = req.params.id as string;
+    const id = String(req.params.id || "").trim();
 
-    const doc = await db.collection("jobs").doc(id).get();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Job ID is required",
+      });
+    }
 
-    if (!doc.exists) {
-      res.status(404).json({
+    const jobRef = db
+      .collection("jobs")
+      .doc(id);
+
+    const jobDoc = await jobRef.get();
+
+    if (!jobDoc.exists) {
+      return res.status(404).json({
         success: false,
         message: "Job not found",
       });
-      return;
     }
 
-    const job = doc.data();
+    const job = jobDoc.data();
 
+    /*
+     * Only job owner can update.
+     */
     if (job?.customerId !== uid) {
-      res.status(403).json({
+      return res.status(403).json({
         success: false,
         message: "Permission denied",
       });
-      return;
     }
 
-    await db.collection("jobs").doc(id).update({
-      ...req.body,
-      updatedAt: new Date(),
-    });
+    /*
+     * Prevent protected fields
+     * from being changed directly.
+     */
+    const {
+      customerId,
+      totalBids,
+      totalViews,
+      createdAt,
+      ...allowedUpdates
+    } = req.body || {};
 
-    const updated = await db.collection("jobs").doc(id).get();
+    /*
+     * Only update fields that were actually sent.
+     */
+    const updateData: Record<
+      string,
+      any
+    > = {};
 
-    res.json({
+    if (
+      allowedUpdates.workerId !==
+      undefined
+    ) {
+      updateData.workerId =
+        allowedUpdates.workerId;
+    }
+
+    if (
+      allowedUpdates.category !==
+      undefined
+    ) {
+      updateData.category =
+        allowedUpdates.category;
+    }
+
+    if (
+      allowedUpdates.title !==
+      undefined
+    ) {
+      updateData.title =
+        allowedUpdates.title;
+    }
+
+    if (
+      allowedUpdates.description !==
+      undefined
+    ) {
+      updateData.description =
+        allowedUpdates.description;
+    }
+
+    if (
+      allowedUpdates.budget !==
+      undefined
+    ) {
+      updateData.budget =
+        allowedUpdates.budget;
+    }
+
+    if (
+      allowedUpdates.address !==
+      undefined
+    ) {
+      updateData.address =
+        allowedUpdates.address;
+    }
+
+    if (
+      allowedUpdates.city !==
+      undefined
+    ) {
+      updateData.city =
+        allowedUpdates.city;
+    }
+
+    if (
+      allowedUpdates.phone !==
+      undefined
+    ) {
+      updateData.phone =
+        allowedUpdates.phone;
+    }
+
+    if (
+      allowedUpdates.image !==
+      undefined
+    ) {
+      updateData.image =
+        allowedUpdates.image;
+    }
+
+    if (
+      allowedUpdates.urgency !==
+      undefined
+    ) {
+      updateData.urgency =
+        allowedUpdates.urgency;
+    }
+
+    if (
+      allowedUpdates.status !==
+      undefined
+    ) {
+      updateData.status =
+        allowedUpdates.status;
+    }
+
+    updateData.updatedAt =
+      new Date();
+
+    await jobRef.update(updateData);
+
+    const updatedDoc =
+      await jobRef.get();
+
+    return res.json({
       success: true,
       message: "Job Updated Successfully",
       data: {
-        id: updated.id,
-        ...updated.data(),
+        id: updatedDoc.id,
+        ...updatedDoc.data(),
       },
     });
-  } catch (error) {
-    console.error(error);
+  } catch (error: any) {
+    console.error(
+      "UPDATE JOB ERROR =",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to update job",
+      message:
+        error?.message ||
+        "Failed to update job",
     });
   }
 }
+
+/* =========================================================
+   DELETE JOB
+========================================================= */
 
 export async function deleteJob(
   req: AuthRequest,
@@ -300,50 +550,69 @@ export async function deleteJob(
     const uid = req.user?.uid;
 
     if (!uid) {
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         message: "Unauthorized",
       });
-      return;
     }
 
-    const id = req.params.id as string;
+    const id = String(req.params.id || "").trim();
 
-    const doc = await db.collection("jobs").doc(id).get();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Job ID is required",
+      });
+    }
 
-    if (!doc.exists) {
-      res.status(404).json({
+    const jobRef = db
+      .collection("jobs")
+      .doc(id);
+
+    const jobDoc = await jobRef.get();
+
+    if (!jobDoc.exists) {
+      return res.status(404).json({
         success: false,
         message: "Job not found",
       });
-      return;
     }
 
-    const job = doc.data();
+    const job = jobDoc.data();
 
+    /*
+     * Only customer who created
+     * the job can delete it.
+     */
     if (job?.customerId !== uid) {
-      res.status(403).json({
+      return res.status(403).json({
         success: false,
         message: "Permission denied",
       });
-      return;
     }
 
-    await db.collection("jobs").doc(id).delete();
+    await jobRef.delete();
 
-    res.json({
+    return res.json({
       success: true,
       message: "Job Deleted Successfully",
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "DELETE JOB ERROR =",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to delete job",
     });
   }
 }
+
+/* =========================================================
+   GET WORKER JOBS
+========================================================= */
 
 export async function getWorkerJobs(
   req: AuthRequest,
@@ -353,11 +622,10 @@ export async function getWorkerJobs(
     const uid = req.user?.uid;
 
     if (!uid) {
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
         message: "Unauthorized",
       });
-      return;
     }
 
     const snapshot = await db
@@ -366,25 +634,34 @@ export async function getWorkerJobs(
       .orderBy("createdAt", "desc")
       .get();
 
-    const jobs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const jobs = snapshot.docs.map(
+      (doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })
+    );
 
-    res.json({
+    return res.json({
       success: true,
       total: jobs.length,
       data: jobs,
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "GET WORKER JOBS ERROR =",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
     });
   }
 }
+
+/* =========================================================
+   GET CUSTOMER JOBS
+========================================================= */
 
 export async function getCustomerJobs(
   req: AuthRequest,
@@ -400,7 +677,10 @@ export async function getCustomerJobs(
       });
     }
 
-    console.log("========== MY JOBS ==========");
+    console.log(
+      "========== MY JOBS =========="
+    );
+
     console.log("UID =", uid);
 
     const snapshot = await db
@@ -408,22 +688,41 @@ export async function getCustomerJobs(
       .where("customerId", "==", uid)
       .get();
 
-    console.log("TOTAL JOBS =", snapshot.size);
+    console.log(
+      "TOTAL JOBS =",
+      snapshot.size
+    );
 
-    const jobs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const jobs = snapshot.docs.map(
+      (doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })
+    );
 
-    // Sort by createdAt desc
+    /*
+     * Sort locally so Firestore does not
+     * require a composite index.
+     */
     jobs.sort((a: any, b: any) => {
-      const aTime = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt).getTime();
+      const aValue = a.createdAt;
+      const bValue = b.createdAt;
 
-      const bTime = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt).getTime();
+      const aTime =
+        typeof aValue?.toMillis ===
+        "function"
+          ? aValue.toMillis()
+          : aValue?.toDate
+          ? aValue.toDate().getTime()
+          : new Date(aValue || 0).getTime();
+
+      const bTime =
+        typeof bValue?.toMillis ===
+        "function"
+          ? bValue.toMillis()
+          : bValue?.toDate
+          ? bValue.toDate().getTime()
+          : new Date(bValue || 0).getTime();
 
       return bTime - aTime;
     });
@@ -434,16 +733,25 @@ export async function getCustomerJobs(
       data: jobs,
     });
   } catch (error: any) {
-    console.log("GET CUSTOMER JOB ERROR =", error);
+    console.error(
+      "GET CUSTOMER JOB ERROR =",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message:
+        error?.message ||
+        "Failed to fetch customer jobs",
     });
   }
 }
 
-// Worker Feed - skills অনুযায়ী pending jobs
+/* =========================================================
+   WORKER FEED JOBS
+   Skills অনুযায়ী pending jobs
+========================================================= */
+
 export async function getWorkerFeedJobs(
   req: AuthRequest,
   res: Response
@@ -458,8 +766,13 @@ export async function getWorkerFeedJobs(
       });
     }
 
-    // Worker তথ্য আনো
-    const workerDoc = await db.collection("users").doc(uid).get();
+    /*
+     * Get worker profile.
+     */
+    const workerDoc = await db
+      .collection("users")
+      .doc(uid)
+      .get();
 
     if (!workerDoc.exists) {
       return res.status(404).json({
@@ -468,39 +781,73 @@ export async function getWorkerFeedJobs(
       });
     }
 
-    const worker = workerDoc.data();
-    const skills: string[] = worker?.skills || [];
+    const worker =
+      workerDoc.data() || {};
+
+    const rawSkills =
+      Array.isArray(worker.skills)
+        ? worker.skills
+        : [];
+
+    const skills = rawSkills
+      .map((skill: any) =>
+        String(skill).trim()
+      )
+      .filter(Boolean);
 
     if (skills.length === 0) {
       return res.json({
         success: true,
+        total: 0,
         data: [],
       });
     }
 
-    // Firestore where("in") সর্বোচ্চ 10টি value support করে
-    const limitedSkills = skills.slice(0, 10);
+    /*
+     * Firestore "in" query supports
+     * a limited number of values.
+     */
+    const limitedSkills =
+      skills.slice(0, 10);
 
     const jobsSnapshot = await db
       .collection("jobs")
-      .where("category", "in", limitedSkills)
-      .where("status", "==", "pending")
-      .orderBy("createdAt", "desc")
+      .where(
+        "category",
+        "in",
+        limitedSkills
+      )
+      .where(
+        "status",
+        "==",
+        "pending"
+      )
+      .orderBy(
+        "createdAt",
+        "desc"
+      )
       .get();
 
-    const jobs = jobsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const jobs =
+      jobsSnapshot.docs.map(
+        (doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })
+      );
 
-    res.json({
+    return res.json({
       success: true,
+      total: jobs.length,
       data: jobs,
     });
   } catch (error) {
-    console.log(error);
+    console.error(
+      "GET WORKER FEED ERROR =",
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
     });
