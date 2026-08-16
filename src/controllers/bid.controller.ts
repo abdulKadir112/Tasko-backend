@@ -7,6 +7,10 @@ import {
   getChatRoom,
 } from "../services/chat.service";
 
+/* =========================================================
+   CREATE BID
+========================================================= */
+
 export async function createBid(
   req: AuthRequest,
   res: Response
@@ -32,9 +36,21 @@ export async function createBid(
       return;
     }
 
-    const { jobId, amount, message } = result.data;
+    const {
+      jobId,
+      amount,
+      message,
+    } = result.data;
 
-    const jobDoc = await db.collection("jobs").doc(jobId).get();
+    /* =====================================================
+       GET JOB
+    ===================================================== */
+
+    const jobRef = db
+      .collection("jobs")
+      .doc(jobId);
+
+    const jobDoc = await jobRef.get();
 
     if (!jobDoc.exists) {
       res.status(404).json({
@@ -44,7 +60,40 @@ export async function createBid(
       return;
     }
 
-    // Already bid check
+    const job = jobDoc.data() || {};
+
+    /* =====================================================
+       WORKER CANNOT BID OWN JOB
+    ===================================================== */
+
+    if (job.customerId === uid) {
+      res.status(400).json({
+        success: false,
+        message: "You cannot bid on your own job.",
+      });
+      return;
+    }
+
+    /* =====================================================
+       JOB MUST BE AVAILABLE
+    ===================================================== */
+
+    if (
+      job.status &&
+      job.status !== "pending"
+    ) {
+      res.status(400).json({
+        success: false,
+        message:
+          "This job is no longer available for bidding.",
+      });
+      return;
+    }
+
+    /* =====================================================
+       ALREADY BID CHECK
+    ===================================================== */
+
     const existing = await db
       .collection("bids")
       .where("jobId", "==", jobId)
@@ -54,40 +103,63 @@ export async function createBid(
     if (!existing.empty) {
       res.status(400).json({
         success: false,
-        message: "You already placed a bid.",
+        message:
+          "You already placed a bid.",
       });
       return;
     }
 
+    /* =====================================================
+       CREATE BID
+    ===================================================== */
+
+    const now = new Date();
+
     const bid = {
       jobId,
       workerId: uid,
-      amount,
-      message,
+      amount: Number(amount),
+      message: message || "",
       status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("bids").add(bid);
+    const docRef = await db
+      .collection("bids")
+      .add(bid);
 
-    // totalBids +1
-    const jobData = jobDoc.data();
-    await db.collection("jobs").doc(jobId).update({
-      totalBids: (jobData?.totalBids || 0) + 1,
-      updatedAt: new Date(),
+    /* =====================================================
+       UPDATE TOTAL BIDS
+    ===================================================== */
+
+    await jobRef.update({
+      totalBids:
+        Number(job.totalBids || 0) + 1,
+
+      updatedAt: now,
     });
+
+    /* =====================================================
+       RESPONSE
+    ===================================================== */
 
     res.status(201).json({
       success: true,
-      message: "Bid submitted successfully",
+      message:
+        "Bid submitted successfully",
+
       data: {
         id: docRef.id,
         ...bid,
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "CREATE BID ERROR =",
+      error
+    );
 
     res.status(500).json({
       success: false,
@@ -96,12 +168,71 @@ export async function createBid(
   }
 }
 
+/* =========================================================
+   GET JOB BIDS
+   Customer দেখতে পারবে তার Job-এর সব Bid
+========================================================= */
+
 export async function getJobBids(
   req: AuthRequest,
   res: Response
 ) {
   try {
-    const jobId = req.params.jobId as string;
+    const uid = req.user?.uid;
+
+    if (!uid) {
+      res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+      return;
+    }
+
+    const jobId =
+      String(req.params.jobId || "").trim();
+
+    if (!jobId) {
+      res.status(400).json({
+        success: false,
+        message: "Job ID is required",
+      });
+      return;
+    }
+
+    /* =====================================================
+       GET JOB
+    ===================================================== */
+
+    const jobDoc = await db
+      .collection("jobs")
+      .doc(jobId)
+      .get();
+
+    if (!jobDoc.exists) {
+      res.status(404).json({
+        success: false,
+        message: "Job not found",
+      });
+      return;
+    }
+
+    const job = jobDoc.data() || {};
+
+    /* =====================================================
+       ONLY JOB OWNER CAN SEE ALL BIDS
+    ===================================================== */
+
+    if (job.customerId !== uid) {
+      res.status(403).json({
+        success: false,
+        message: "Permission denied",
+      });
+      return;
+    }
+
+    /* =====================================================
+       GET BIDS
+    ===================================================== */
 
     const snapshot = await db
       .collection("bids")
@@ -115,16 +246,18 @@ export async function getJobBids(
 
       let worker = null;
 
-      const workerDoc = await db
-        .collection("users")
-        .doc(bid.workerId)
-        .get();
+      if (bid.workerId) {
+        const workerDoc = await db
+          .collection("users")
+          .doc(bid.workerId)
+          .get();
 
-      if (workerDoc.exists) {
-        worker = {
-          id: workerDoc.id,
-          ...workerDoc.data(),
-        };
+        if (workerDoc.exists) {
+          worker = {
+            id: workerDoc.id,
+            ...workerDoc.data(),
+          };
+        }
       }
 
       bids.push({
@@ -134,25 +267,37 @@ export async function getJobBids(
       });
     }
 
-    // JS sort (index লাগবে না)
-    bids.sort((a, b) => {
-      const aTime = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt).getTime();
+    /* =====================================================
+       SORT NEWEST FIRST
+    ===================================================== */
 
-      const bTime = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt).getTime();
+    bids.sort((a, b) => {
+      const aTime =
+        a.createdAt?.toDate
+          ? a.createdAt.toDate().getTime()
+          : new Date(
+              a.createdAt || 0
+            ).getTime();
+
+      const bTime =
+        b.createdAt?.toDate
+          ? b.createdAt.toDate().getTime()
+          : new Date(
+              b.createdAt || 0
+            ).getTime();
 
       return bTime - aTime;
     });
 
-    return res.json({
+    res.json({
       success: true,
       data: bids,
     });
   } catch (error) {
-    console.log(error);
+    console.error(
+      "GET JOB BIDS ERROR =",
+      error
+    );
 
     res.status(500).json({
       success: false,
@@ -160,6 +305,10 @@ export async function getJobBids(
     });
   }
 }
+
+/* =========================================================
+   GET MY BIDS
+========================================================= */
 
 export async function getMyBids(
   req: AuthRequest,
@@ -186,30 +335,48 @@ export async function getMyBids(
     for (const doc of snapshot.docs) {
       const bid = doc.data();
 
-      const jobDoc = await db
-        .collection("jobs")
-        .doc(bid.jobId)
-        .get();
+      let job = null;
+
+      if (bid.jobId) {
+        const jobDoc = await db
+          .collection("jobs")
+          .doc(bid.jobId)
+          .get();
+
+        if (jobDoc.exists) {
+          job = {
+            id: jobDoc.id,
+            ...jobDoc.data(),
+          };
+        }
+      }
 
       bids.push({
         id: doc.id,
         ...bid,
-        job: jobDoc.exists
-          ? {
-              id: jobDoc.id,
-              ...jobDoc.data(),
-            }
-          : null,
+        job,
       });
     }
 
+    /* =====================================================
+       SORT
+    ===================================================== */
+
     bids.sort((a, b) => {
-      const aTime = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt).getTime();
-      const bTime = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt).getTime();
+      const aTime =
+        a.createdAt?.toDate
+          ? a.createdAt.toDate().getTime()
+          : new Date(
+              a.createdAt || 0
+            ).getTime();
+
+      const bTime =
+        b.createdAt?.toDate
+          ? b.createdAt.toDate().getTime()
+          : new Date(
+              b.createdAt || 0
+            ).getTime();
+
       return bTime - aTime;
     });
 
@@ -218,7 +385,10 @@ export async function getMyBids(
       data: bids,
     });
   } catch (error) {
-    console.log(error);
+    console.error(
+      "GET MY BIDS ERROR =",
+      error
+    );
 
     res.status(500).json({
       success: false,
@@ -227,14 +397,25 @@ export async function getMyBids(
   }
 }
 
+/* =========================================================
+   ACCEPT BID
+   Customer → Bid accept
+   ↓
+   Job assigned
+   ↓
+   Booking created
+   ↓
+   Chat created
+========================================================= */
+
 export async function acceptBid(
   req: AuthRequest,
   res: Response
 ) {
   try {
-    const uid = req.user?.uid;
+    const customerId = req.user?.uid;
 
-    if (!uid) {
+    if (!customerId) {
       res.status(401).json({
         success: false,
         message: "Unauthorized",
@@ -242,9 +423,26 @@ export async function acceptBid(
       return;
     }
 
-    const bidId = req.params.id as string;
+    const bidId =
+      String(req.params.id || "").trim();
 
-    const bidDoc = await db.collection("bids").doc(bidId).get();
+    if (!bidId) {
+      res.status(400).json({
+        success: false,
+        message: "Bid ID is required",
+      });
+      return;
+    }
+
+    /* =====================================================
+       GET BID
+    ===================================================== */
+
+    const bidRef = db
+      .collection("bids")
+      .doc(bidId);
+
+    const bidDoc = await bidRef.get();
 
     if (!bidDoc.exists) {
       res.status(404).json({
@@ -254,9 +452,17 @@ export async function acceptBid(
       return;
     }
 
-    const bid = bidDoc.data()!;
+    const bid = bidDoc.data() || {};
 
-    const jobDoc = await db.collection("jobs").doc(bid.jobId).get();
+    /* =====================================================
+       GET JOB
+    ===================================================== */
+
+    const jobRef = db
+      .collection("jobs")
+      .doc(bid.jobId);
+
+    const jobDoc = await jobRef.get();
 
     if (!jobDoc.exists) {
       res.status(404).json({
@@ -266,16 +472,13 @@ export async function acceptBid(
       return;
     }
 
-    const job = jobDoc.data()!;
+    const job = jobDoc.data() || {};
 
-    // ========== DEBUG LOGS ==========
-    console.log("========== ACCEPT BID ==========");
-    console.log("Bid ID:", bidId);
-    console.log("Bid:", bid);
-    console.log("Job:", job);
-    // ================================
+    /* =====================================================
+       CUSTOMER PERMISSION
+    ===================================================== */
 
-    if (job.customerId !== uid) {
+    if (job.customerId !== customerId) {
       res.status(403).json({
         success: false,
         message: "Permission denied",
@@ -283,90 +486,321 @@ export async function acceptBid(
       return;
     }
 
-    // Job assign
-    await db.collection("jobs").doc(bid.jobId).update({
+    /* =====================================================
+       ALREADY ACCEPTED
+    ===================================================== */
+
+    if (bid.status === "accepted") {
+      res.status(400).json({
+        success: false,
+        message:
+          "This bid has already been accepted.",
+      });
+      return;
+    }
+
+    /* =====================================================
+       JOB ALREADY ASSIGNED
+    ===================================================== */
+
+    if (
+      job.status === "assigned" ||
+      job.assignedWorkerId
+    ) {
+      res.status(400).json({
+        success: false,
+        message:
+          "This job has already been assigned.",
+      });
+      return;
+    }
+
+    /* =====================================================
+       CREATE BOOKING
+       IMPORTANT:
+       Job-based booking এর জন্য jobId রাখা হচ্ছে
+    ===================================================== */
+
+    const existingBookingSnapshot =
+      await db
+        .collection("bookings")
+        .where(
+          "jobId",
+          "==",
+          bid.jobId
+        )
+        .get();
+
+    let bookingId: string | null = null;
+
+    if (
+      !existingBookingSnapshot.empty
+    ) {
+      const existingBooking =
+        existingBookingSnapshot.docs[0];
+
+      bookingId = existingBooking.id;
+    }
+
+    const now = new Date();
+
+    /* =====================================================
+       CREATE BOOKING IF NOT EXISTS
+    ===================================================== */
+
+    if (!bookingId) {
+      const booking = {
+        jobId: bid.jobId,
+
+        // Job booking হওয়ায় serviceId null
+        serviceId: null,
+
+        workerId: bid.workerId,
+        customerId: job.customerId,
+
+        serviceTitle:
+          String(job.title || ""),
+
+        category:
+          String(job.category || ""),
+
+        price:
+          Number(bid.amount || 0),
+
+        requestedDate: null,
+
+        customerMessage:
+          String(
+            job.description || ""
+          ),
+
+        status: "accepted",
+
+        workerAcceptedAt: now,
+        workerRejectedAt: null,
+
+        workerMessage:
+          bid.message
+            ? String(bid.message)
+            : null,
+
+        proposedDate: null,
+        proposedStartTime: null,
+        proposedEndTime: null,
+
+        customerConfirmedAt: null,
+
+        confirmedDate: null,
+        confirmedStartTime: null,
+        confirmedEndTime: null,
+
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const bookingRef = await db
+        .collection("bookings")
+        .add(booking);
+
+      bookingId = bookingRef.id;
+    }
+
+    /* =====================================================
+       ASSIGN JOB
+    ===================================================== */
+
+    await jobRef.update({
       status: "assigned",
-      assignedWorkerId: bid.workerId,
+
       workerId: bid.workerId,
-      updatedAt: new Date(),
+
+      assignedWorkerId:
+        bid.workerId,
+
+      bookingId,
+
+      updatedAt: now,
     });
 
-    // Accept this bid
-    await db.collection("bids").doc(bidId).update({
+    /* =====================================================
+       ACCEPT CURRENT BID
+    ===================================================== */
+
+    await bidRef.update({
       status: "accepted",
-      updatedAt: new Date(),
+      updatedAt: now,
     });
 
-    // Reject other bids
+    /* =====================================================
+       REJECT OTHER BIDS
+    ===================================================== */
+
     const otherBids = await db
       .collection("bids")
-      .where("jobId", "==", bid.jobId)
+      .where(
+        "jobId",
+        "==",
+        bid.jobId
+      )
       .get();
 
-    for (const bidItem of otherBids.docs) {
+    for (
+      const bidItem of otherBids.docs
+    ) {
       if (bidItem.id !== bidId) {
-        await bidItem.ref.update({
-          status: "rejected",
-          updatedAt: new Date(),
-        });
+        const otherBid =
+          bidItem.data();
+
+        if (
+          otherBid.status !==
+          "rejected"
+        ) {
+          await bidItem.ref.update({
+            status: "rejected",
+            updatedAt: now,
+          });
+        }
       }
     }
 
-    // ===============================
-    // Create Chat Room Automatically
-    // ===============================
-    console.log("Checking Existing Chat...");
+    /* =====================================================
+       CREATE CHAT ROOM
+    ===================================================== */
 
-    const existingChat = await getChatRoom(
-      bid.jobId,
-      bid.workerId
+    console.log(
+      "========== ACCEPT BID =========="
     );
 
-    console.log("Existing Chat:", existingChat);
+    console.log(
+      "Bid ID:",
+      bidId
+    );
 
-    if (!existingChat) {
-      console.log("Creating Chat Room...");
+    console.log(
+      "Booking ID:",
+      bookingId
+    );
 
-      const chat = await createChatRoom({
-        customerId: job.customerId,
-        workerId: bid.workerId,
-        jobId: bid.jobId,
-        bidId,
-        lastMessage: "",
-        lastMessageAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+    let chatEnabled = false;
 
-      console.log("Chat Created Successfully");
-      console.log(chat);
+    try {
+      const existingChat =
+        await getChatRoom(
+          bid.jobId,
+          bid.workerId
+        );
+
+      if (!existingChat) {
+        await createChatRoom({
+          customerId:
+            job.customerId,
+
+          workerId:
+            bid.workerId,
+
+          jobId:
+            bid.jobId,
+
+          bidId,
+
+          lastMessage: "",
+
+          lastMessageAt: now,
+
+          createdAt: now,
+
+          updatedAt: now,
+        });
+      }
+
+      chatEnabled = true;
+    } catch (chatError) {
+      console.error(
+        "CHAT CREATION ERROR =",
+        chatError
+      );
+
+      // Booking/Job successful হলেও
+      // chat failure-এর কারণে পুরো request fail করবো না
+      chatEnabled = false;
     }
 
-    console.log("Bid Accept Completed");
+    /* =====================================================
+       NOTIFICATION
+    ===================================================== */
+
+    try {
+      await db
+        .collection("notifications")
+        .add({
+          recipientId:
+            bid.workerId,
+
+          type:
+            "bid_accepted",
+
+          title:
+            "Your Bid Was Accepted",
+
+          message:
+            `Your bid for "${job.title || "Job"}" was accepted.`,
+
+          jobId:
+            bid.jobId,
+
+          bookingId,
+
+          createdAt: now,
+
+          isRead: false,
+        });
+    } catch (notificationError) {
+      console.error(
+        "BID ACCEPT NOTIFICATION ERROR =",
+        notificationError
+      );
+    }
+
+    /* =====================================================
+       RESPONSE
+    ===================================================== */
 
     res.json({
       success: true,
-      message: "Bid accepted successfully",
-      chatEnabled: true,
+
+      message:
+        "Bid accepted and booking created successfully",
+
+      bookingId,
+
+      chatEnabled,
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "ACCEPT BID ERROR =",
+      error
+    );
 
     res.status(500).json({
       success: false,
-      message: "Failed to accept bid",
+      message:
+        "Failed to accept bid",
     });
   }
 }
+
+/* =========================================================
+   REJECT BID
+========================================================= */
 
 export async function rejectBid(
   req: AuthRequest,
   res: Response
 ) {
   try {
-    const uid = req.user?.uid;
+    const customerId = req.user?.uid;
 
-    if (!uid) {
+    if (!customerId) {
       res.status(401).json({
         success: false,
         message: "Unauthorized",
@@ -374,9 +808,22 @@ export async function rejectBid(
       return;
     }
 
-    const bidId = req.params.id as string;
+    const bidId =
+      String(req.params.id || "").trim();
 
-    const bidDoc = await db.collection("bids").doc(bidId).get();
+    if (!bidId) {
+      res.status(400).json({
+        success: false,
+        message: "Bid ID is required",
+      });
+      return;
+    }
+
+    const bidRef = db
+      .collection("bids")
+      .doc(bidId);
+
+    const bidDoc = await bidRef.get();
 
     if (!bidDoc.exists) {
       res.status(404).json({
@@ -386,9 +833,12 @@ export async function rejectBid(
       return;
     }
 
-    const bid = bidDoc.data()!;
+    const bid = bidDoc.data() || {};
 
-    const jobDoc = await db.collection("jobs").doc(bid.jobId).get();
+    const jobDoc = await db
+      .collection("jobs")
+      .doc(bid.jobId)
+      .get();
 
     if (!jobDoc.exists) {
       res.status(404).json({
@@ -398,9 +848,9 @@ export async function rejectBid(
       return;
     }
 
-    const job = jobDoc.data()!;
+    const job = jobDoc.data() || {};
 
-    if (job.customerId !== uid) {
+    if (job.customerId !== customerId) {
       res.status(403).json({
         success: false,
         message: "Permission denied",
@@ -408,21 +858,35 @@ export async function rejectBid(
       return;
     }
 
-    await db.collection("bids").doc(bidId).update({
+    if (bid.status !== "pending") {
+      res.status(400).json({
+        success: false,
+        message:
+          "This bid can no longer be rejected.",
+      });
+      return;
+    }
+
+    await bidRef.update({
       status: "rejected",
       updatedAt: new Date(),
     });
 
     res.json({
       success: true,
-      message: "Bid rejected successfully",
+      message:
+        "Bid rejected successfully",
     });
   } catch (error) {
-    console.error(error);
+    console.error(
+      "REJECT BID ERROR =",
+      error
+    );
 
     res.status(500).json({
       success: false,
-      message: "Failed to reject bid",
+      message:
+        "Failed to reject bid",
     });
   }
 }

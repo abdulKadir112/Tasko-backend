@@ -6,7 +6,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
    TYPES
 ========================================================= */
 
-type BookingStatus =
+export type BookingStatus =
   | "pending"
   | "accepted"
   | "rejected"
@@ -16,9 +16,80 @@ type BookingStatus =
   | "completed"
   | "cancelled";
 
+const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
+  "pending",
+  "accepted",
+  "reschedule_requested",
+  "confirmed",
+  "in_progress",
+];
+
 /* =========================================================
-   CREATE BOOKING
-   Customer books a worker service
+   HELPERS
+========================================================= */
+
+function getUid(
+  req: AuthRequest
+) {
+  return req.user?.uid;
+}
+
+function getBookingId(
+  req: AuthRequest
+) {
+  return String(
+    req.params.id || ""
+  ).trim();
+}
+
+function serializeBooking(
+  id: string,
+  data: FirebaseFirestore.DocumentData
+) {
+  return {
+    id,
+    ...data,
+  };
+}
+
+async function getBookingDocument(
+  id: string
+) {
+  const ref = db
+    .collection("bookings")
+    .doc(id);
+
+  const snapshot =
+    await ref.get();
+
+  return {
+    ref,
+    snapshot,
+  };
+}
+
+async function createNotification(
+  data: {
+    recipientId: string;
+    type: string;
+    title: string;
+    message: string;
+    bookingId: string;
+    serviceId?: string | null;
+    jobId?: string | null;
+    createdAt: Date;
+  }
+) {
+  await db
+    .collection("notifications")
+    .add({
+      ...data,
+      isRead: false,
+    });
+}
+
+/* =========================================================
+   CREATE SERVICE BOOKING
 ========================================================= */
 
 export async function createBooking(
@@ -26,7 +97,8 @@ export async function createBooking(
   res: Response
 ) {
   try {
-    const customerId = req.user?.uid;
+    const customerId =
+      getUid(req);
 
     if (!customerId) {
       return res.status(401).json({
@@ -36,15 +108,21 @@ export async function createBooking(
     }
 
     const {
-      serviceId,
+      serviceId: rawServiceId,
       requestedDate,
       customerMessage,
     } = req.body || {};
 
+    const serviceId =
+      String(
+        rawServiceId || ""
+      ).trim();
+
     if (!serviceId) {
       return res.status(400).json({
         success: false,
-        message: "Service ID is required",
+        message:
+          "Service ID is required",
       });
     }
 
@@ -54,111 +132,144 @@ export async function createBooking(
 
     const serviceRef = db
       .collection("services")
-      .doc(String(serviceId).trim());
+      .doc(serviceId);
 
-    const serviceDoc = await serviceRef.get();
+    const serviceDoc =
+      await serviceRef.get();
 
     if (!serviceDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Service not found",
+        message:
+          "Service not found",
       });
     }
 
-    const service = serviceDoc.data() || {};
+    const service =
+      serviceDoc.data() || {};
 
-    /* =====================================================
-       CHECK SERVICE ACTIVE
-    ===================================================== */
-
-    if (service.isActive === false) {
+    if (
+      service.isActive === false
+    ) {
       return res.status(400).json({
         success: false,
-        message: "This service is currently unavailable",
+        message:
+          "This service is currently unavailable",
       });
     }
 
-    /* =====================================================
-       PREVENT WORKER BOOKING OWN SERVICE
-    ===================================================== */
-
-    if (service.workerId === customerId) {
-      return res.status(400).json({
-        success: false,
-        message: "You cannot book your own service",
-      });
-    }
-
-    const workerId = service.workerId;
+    const workerId =
+      String(
+        service.workerId || ""
+      ).trim();
 
     if (!workerId) {
       return res.status(400).json({
         success: false,
-        message: "Service worker not found",
+        message:
+          "Service worker not found",
+      });
+    }
+
+    if (
+      workerId === customerId
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You cannot book your own service",
       });
     }
 
     /* =====================================================
-       CHECK EXISTING PENDING/ACTIVE BOOKING
+       ACTIVE BOOKING CHECK
     ===================================================== */
 
-    const existingSnapshot = await db
-      .collection("bookings")
-      .where("serviceId", "==", serviceId)
-      .where("customerId", "==", customerId)
-      .get();
-
-    const activeStatuses: BookingStatus[] = [
-      "pending",
-      "accepted",
-      "reschedule_requested",
-      "confirmed",
-      "in_progress",
-    ];
-
-    const existingBooking = existingSnapshot.docs.find(
-      (doc) =>
-        activeStatuses.includes(
-          doc.data().status as BookingStatus
+    const existingSnapshot =
+      await db
+        .collection("bookings")
+        .where(
+          "serviceId",
+          "==",
+          serviceId
         )
-    );
+        .where(
+          "customerId",
+          "==",
+          customerId
+        )
+        .get();
+
+    const existingBooking =
+      existingSnapshot.docs.find(
+        (doc) =>
+          ACTIVE_BOOKING_STATUSES.includes(
+            doc.data()
+              .status as BookingStatus
+          )
+      );
 
     if (existingBooking) {
       return res.status(409).json({
         success: false,
+
         message:
           "You already have an active booking for this service",
-        data: {
-          id: existingBooking.id,
-          ...existingBooking.data(),
-        },
+
+        data:
+          serializeBooking(
+            existingBooking.id,
+            existingBooking.data()
+          ),
       });
     }
 
     /* =====================================================
-       CREATE BOOKING
+       CREATE
     ===================================================== */
 
     const now = new Date();
 
     const booking = {
-      serviceId: String(serviceId).trim(),
+      jobId: null,
+
+      serviceId,
 
       workerId,
+
       customerId,
 
-      serviceTitle: service.title || "",
-      category: service.category || "",
+      serviceTitle:
+        String(
+          service.title || ""
+        ),
 
-      price: Number(service.price || 0),
+      category:
+        String(
+          service.category || ""
+        ),
+
+      price:
+        Number(
+          service.price || 0
+        ),
 
       requestedDate:
-        requestedDate || null,
+        requestedDate
+          ? String(
+              requestedDate
+            )
+          : null,
 
       customerMessage:
-        customerMessage || "",
+        customerMessage
+          ? String(
+              customerMessage
+            )
+          : "",
 
-      status: "pending" as BookingStatus,
+      status:
+        "pending" as BookingStatus,
 
       workerAcceptedAt: null,
       workerRejectedAt: null,
@@ -179,35 +290,43 @@ export async function createBooking(
       updatedAt: now,
     };
 
-    const bookingRef = await db
-      .collection("bookings")
-      .add(booking);
+    const bookingRef =
+      await db
+        .collection("bookings")
+        .add(booking);
 
     /* =====================================================
-       WORKER NOTIFICATION
+       NOTIFICATION
     ===================================================== */
 
-    await db.collection("notifications").add({
-      recipientId: workerId,
+    await createNotification({
+      recipientId:
+        workerId,
 
-      type: "new_booking",
+      type:
+        "new_booking",
 
-      title: "New Service Booking",
+      title:
+        "New Service Booking",
 
-      message: `Someone booked your service "${service.title || "Service"}"`,
+      message:
+        `Someone booked your service "${service.title || "Service"}"`,
 
-      bookingId: bookingRef.id,
+      bookingId:
+        bookingRef.id,
 
-      serviceId: String(serviceId).trim(),
+      serviceId,
 
-      isRead: false,
+      jobId: null,
 
       createdAt: now,
     });
 
     return res.status(201).json({
       success: true,
-      message: "Booking created successfully",
+
+      message:
+        "Booking created successfully",
 
       data: {
         id: bookingRef.id,
@@ -222,6 +341,7 @@ export async function createBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
         error?.message ||
         "Failed to create booking",
@@ -238,7 +358,8 @@ export async function getCustomerBookings(
   res: Response
 ) {
   try {
-    const customerId = req.user?.uid;
+    const customerId =
+      getUid(req);
 
     if (!customerId) {
       return res.status(401).json({
@@ -247,41 +368,47 @@ export async function getCustomerBookings(
       });
     }
 
-    const snapshot = await db
-      .collection("bookings")
-      .where(
-        "customerId",
-        "==",
-        customerId
-      )
-      .get();
+    const snapshot =
+      await db
+        .collection("bookings")
+        .where(
+          "customerId",
+          "==",
+          customerId
+        )
+        .get();
 
-    const bookings = snapshot.docs.map(
-      (doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })
+    const bookings =
+      snapshot.docs.map(
+        (doc) =>
+          serializeBooking(
+            doc.id,
+            doc.data()
+          )
+      );
+
+    bookings.sort(
+      (a: any, b: any) => {
+        const aTime =
+          a.createdAt?.toMillis?.() ||
+          new Date(
+            a.createdAt || 0
+          ).getTime();
+
+        const bTime =
+          b.createdAt?.toMillis?.() ||
+          new Date(
+            b.createdAt || 0
+          ).getTime();
+
+        return bTime - aTime;
+      }
     );
-
-    bookings.sort((a: any, b: any) => {
-      const aTime =
-        a.createdAt?.toMillis?.() ||
-        new Date(
-          a.createdAt || 0
-        ).getTime();
-
-      const bTime =
-        b.createdAt?.toMillis?.() ||
-        new Date(
-          b.createdAt || 0
-        ).getTime();
-
-      return bTime - aTime;
-    });
 
     return res.json({
       success: true,
-      total: bookings.length,
+      total:
+        bookings.length,
       data: bookings,
     });
   } catch (error) {
@@ -307,7 +434,8 @@ export async function getWorkerBookings(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -316,41 +444,47 @@ export async function getWorkerBookings(
       });
     }
 
-    const snapshot = await db
-      .collection("bookings")
-      .where(
-        "workerId",
-        "==",
-        workerId
-      )
-      .get();
+    const snapshot =
+      await db
+        .collection("bookings")
+        .where(
+          "workerId",
+          "==",
+          workerId
+        )
+        .get();
 
-    const bookings = snapshot.docs.map(
-      (doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })
+    const bookings =
+      snapshot.docs.map(
+        (doc) =>
+          serializeBooking(
+            doc.id,
+            doc.data()
+          )
+      );
+
+    bookings.sort(
+      (a: any, b: any) => {
+        const aTime =
+          a.createdAt?.toMillis?.() ||
+          new Date(
+            a.createdAt || 0
+          ).getTime();
+
+        const bTime =
+          b.createdAt?.toMillis?.() ||
+          new Date(
+            b.createdAt || 0
+          ).getTime();
+
+        return bTime - aTime;
+      }
     );
-
-    bookings.sort((a: any, b: any) => {
-      const aTime =
-        a.createdAt?.toMillis?.() ||
-        new Date(
-          a.createdAt || 0
-        ).getTime();
-
-      const bTime =
-        b.createdAt?.toMillis?.() ||
-        new Date(
-          b.createdAt || 0
-        ).getTime();
-
-      return bTime - aTime;
-    });
 
     return res.json({
       success: true,
-      total: bookings.length,
+      total:
+        bookings.length,
       data: bookings,
     });
   } catch (error) {
@@ -376,7 +510,8 @@ export async function getBookingById(
   res: Response
 ) {
   try {
-    const uid = req.user?.uid;
+    const uid =
+      getUid(req);
 
     if (!uid) {
       return res.status(401).json({
@@ -385,35 +520,34 @@ export async function getBookingById(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
     if (!id) {
       return res.status(400).json({
         success: false,
-        message: "Booking ID is required",
+        message:
+          "Booking ID is required",
       });
     }
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    const {
+      snapshot,
+    } =
+      await getBookingDocument(
+        id
+      );
 
-    const bookingDoc =
-      await bookingRef.get();
-
-    if (!bookingDoc.exists) {
+    if (!snapshot.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
     const booking =
-      bookingDoc.data() || {};
-
-    /* Only customer or worker can view */
+      snapshot.data() || {};
 
     if (
       booking.customerId !== uid &&
@@ -421,17 +555,19 @@ export async function getBookingById(
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
     return res.json({
       success: true,
 
-      data: {
-        id: bookingDoc.id,
-        ...booking,
-      },
+      data:
+        serializeBooking(
+          snapshot.id,
+          booking
+        ),
     });
   } catch (error) {
     console.error(
@@ -456,7 +592,8 @@ export async function acceptBooking(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -465,21 +602,30 @@ export async function acceptBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -487,15 +633,20 @@ export async function acceptBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.workerId !== workerId
+      booking.workerId !==
+      workerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
-    if (booking.status !== "pending") {
+    if (
+      booking.status !==
+      "pending"
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -503,37 +654,46 @@ export async function acceptBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "accepted",
+      status:
+        "accepted",
 
-      workerAcceptedAt: now,
+      workerAcceptedAt:
+        now,
 
-      updatedAt: now,
+      updatedAt:
+        now,
     });
 
-    /* Customer notification */
-
-    await db.collection("notifications").add({
+    await createNotification({
       recipientId:
         booking.customerId,
 
-      type: "booking_accepted",
+      type:
+        "booking_accepted",
 
-      title: "Booking Accepted",
+      title:
+        "Booking Accepted",
 
       message:
         "Worker accepted your service booking",
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     const updatedDoc =
@@ -545,10 +705,11 @@ export async function acceptBooking(
       message:
         "Booking accepted successfully",
 
-      data: {
-        id: updatedDoc.id,
-        ...updatedDoc.data(),
-      },
+      data:
+        serializeBooking(
+          updatedDoc.id,
+          updatedDoc.data() || {}
+        ),
     });
   } catch (error: any) {
     console.error(
@@ -558,6 +719,7 @@ export async function acceptBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
         error?.message ||
         "Failed to accept booking",
@@ -574,7 +736,8 @@ export async function rejectBooking(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -583,21 +746,30 @@ export async function rejectBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -605,15 +777,20 @@ export async function rejectBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.workerId !== workerId
+      booking.workerId !==
+      workerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
-    if (booking.status !== "pending") {
+    if (
+      booking.status !==
+      "pending"
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -621,45 +798,55 @@ export async function rejectBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "rejected",
+      status:
+        "rejected",
 
-      workerRejectedAt: now,
+      workerRejectedAt:
+        now,
 
-      updatedAt: now,
+      updatedAt:
+        now,
     });
 
-    /* Customer notification */
-
-    await db.collection("notifications").add({
+    await createNotification({
       recipientId:
         booking.customerId,
 
-      type: "booking_rejected",
+      type:
+        "booking_rejected",
 
-      title: "Booking Rejected",
+      title:
+        "Booking Rejected",
 
       message:
         "Worker is unable to accept your booking",
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     return res.json({
       success: true,
+
       message:
         "Booking rejected successfully",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
       "REJECT BOOKING ERROR =",
       error
@@ -667,7 +854,9 @@ export async function rejectBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
+        error?.message ||
         "Failed to reject booking",
     });
   }
@@ -682,7 +871,8 @@ export async function proposeBookingTime(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -691,9 +881,8 @@ export async function proposeBookingTime(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
     const {
       date,
@@ -701,6 +890,14 @@ export async function proposeBookingTime(
       endTime,
       message,
     } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
     if (
       !date ||
@@ -714,17 +911,19 @@ export async function proposeBookingTime(
       });
     }
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
-
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -732,16 +931,19 @@ export async function proposeBookingTime(
       bookingDoc.data() || {};
 
     if (
-      booking.workerId !== workerId
+      booking.workerId !==
+      workerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
     if (
-      booking.status !== "accepted"
+      booking.status !==
+      "accepted"
     ) {
       return res.status(400).json({
         success: false,
@@ -750,47 +952,57 @@ export async function proposeBookingTime(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
       status:
         "reschedule_requested",
 
-      proposedDate: date,
+      proposedDate:
+        String(date),
 
       proposedStartTime:
-        startTime,
+        String(startTime),
 
       proposedEndTime:
-        endTime,
+        String(endTime),
 
       workerMessage:
-        message || "",
+        message
+          ? String(message)
+          : "",
 
-      updatedAt: now,
+      updatedAt:
+        now,
     });
 
-    /* Customer notification */
-
-    await db.collection("notifications").add({
+    await createNotification({
       recipientId:
         booking.customerId,
 
-      type: "schedule_proposed",
+      type:
+        "schedule_proposed",
 
-      title: "Worker Proposed a Time",
+      title:
+        "Worker Proposed a Time",
 
       message:
         `Worker proposed ${date} from ${startTime} to ${endTime}`,
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     const updatedDoc =
@@ -802,10 +1014,11 @@ export async function proposeBookingTime(
       message:
         "Schedule sent successfully",
 
-      data: {
-        id: updatedDoc.id,
-        ...updatedDoc.data(),
-      },
+      data:
+        serializeBooking(
+          updatedDoc.id,
+          updatedDoc.data() || {}
+        ),
     });
   } catch (error: any) {
     console.error(
@@ -815,6 +1028,7 @@ export async function proposeBookingTime(
 
     return res.status(500).json({
       success: false,
+
       message:
         error?.message ||
         "Failed to propose schedule",
@@ -831,7 +1045,8 @@ export async function confirmBooking(
   res: Response
 ) {
   try {
-    const customerId = req.user?.uid;
+    const customerId =
+      getUid(req);
 
     if (!customerId) {
       return res.status(401).json({
@@ -840,21 +1055,30 @@ export async function confirmBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -862,11 +1086,13 @@ export async function confirmBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.customerId !== customerId
+      booking.customerId !==
+      customerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
@@ -881,10 +1107,12 @@ export async function confirmBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "confirmed",
+      status:
+        "confirmed",
 
       confirmedDate:
         booking.proposedDate,
@@ -895,32 +1123,39 @@ export async function confirmBooking(
       confirmedEndTime:
         booking.proposedEndTime,
 
-      customerConfirmedAt: now,
+      customerConfirmedAt:
+        now,
 
-      updatedAt: now,
+      updatedAt:
+        now,
     });
 
-    /* Worker notification */
-
-    await db.collection("notifications").add({
+    await createNotification({
       recipientId:
         booking.workerId,
 
-      type: "booking_confirmed",
+      type:
+        "booking_confirmed",
 
-      title: "Booking Confirmed",
+      title:
+        "Booking Confirmed",
 
       message:
         `Customer confirmed ${booking.proposedDate} ${booking.proposedStartTime}-${booking.proposedEndTime}`,
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     const updatedDoc =
@@ -932,10 +1167,11 @@ export async function confirmBooking(
       message:
         "Booking confirmed successfully",
 
-      data: {
-        id: updatedDoc.id,
-        ...updatedDoc.data(),
-      },
+      data:
+        serializeBooking(
+          updatedDoc.id,
+          updatedDoc.data() || {}
+        ),
     });
   } catch (error: any) {
     console.error(
@@ -945,6 +1181,7 @@ export async function confirmBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
         error?.message ||
         "Failed to confirm booking",
@@ -961,7 +1198,8 @@ export async function startBooking(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -970,21 +1208,30 @@ export async function startBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -992,16 +1239,19 @@ export async function startBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.workerId !== workerId
+      booking.workerId !==
+      workerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
     if (
-      booking.status !== "confirmed"
+      booking.status !==
+      "confirmed"
     ) {
       return res.status(400).json({
         success: false,
@@ -1010,40 +1260,69 @@ export async function startBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "in_progress",
-      updatedAt: now,
+      status:
+        "in_progress",
+
+      updatedAt:
+        now,
     });
 
-    await db.collection("notifications").add({
+    /* =====================================================
+       UPDATE JOB IF THIS IS JOB BOOKING
+    ===================================================== */
+
+    if (booking.jobId) {
+      await db
+        .collection("jobs")
+        .doc(booking.jobId)
+        .update({
+          status:
+            "in_progress",
+
+          updatedAt:
+            now,
+        });
+    }
+
+    await createNotification({
       recipientId:
         booking.customerId,
 
-      type: "job_started",
+      type:
+        "job_started",
 
-      title: "Job Started",
+      title:
+        "Job Started",
 
       message:
         "Worker has started your service",
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     return res.json({
       success: true,
+
       message:
         "Job started successfully",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
       "START BOOKING ERROR =",
       error
@@ -1051,7 +1330,9 @@ export async function startBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
+        error?.message ||
         "Failed to start job",
     });
   }
@@ -1066,7 +1347,8 @@ export async function completeBooking(
   res: Response
 ) {
   try {
-    const workerId = req.user?.uid;
+    const workerId =
+      getUid(req);
 
     if (!workerId) {
       return res.status(401).json({
@@ -1075,21 +1357,30 @@ export async function completeBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -1097,16 +1388,19 @@ export async function completeBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.workerId !== workerId
+      booking.workerId !==
+      workerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
     if (
-      booking.status !== "in_progress"
+      booking.status !==
+      "in_progress"
     ) {
       return res.status(400).json({
         success: false,
@@ -1115,40 +1409,69 @@ export async function completeBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "completed",
-      updatedAt: now,
+      status:
+        "completed",
+
+      updatedAt:
+        now,
     });
 
-    await db.collection("notifications").add({
+    /* =====================================================
+       UPDATE JOB
+    ===================================================== */
+
+    if (booking.jobId) {
+      await db
+        .collection("jobs")
+        .doc(booking.jobId)
+        .update({
+          status:
+            "completed",
+
+          updatedAt:
+            now,
+        });
+    }
+
+    await createNotification({
       recipientId:
         booking.customerId,
 
-      type: "job_completed",
+      type:
+        "job_completed",
 
-      title: "Job Completed",
+      title:
+        "Job Completed",
 
       message:
         "Worker marked your service as completed",
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     return res.json({
       success: true,
+
       message:
         "Job completed successfully",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
       "COMPLETE BOOKING ERROR =",
       error
@@ -1156,7 +1479,9 @@ export async function completeBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
+        error?.message ||
         "Failed to complete job",
     });
   }
@@ -1171,7 +1496,8 @@ export async function cancelBooking(
   res: Response
 ) {
   try {
-    const customerId = req.user?.uid;
+    const customerId =
+      getUid(req);
 
     if (!customerId) {
       return res.status(401).json({
@@ -1180,21 +1506,30 @@ export async function cancelBooking(
       });
     }
 
-    const id = String(
-      req.params.id || ""
-    ).trim();
+    const id =
+      getBookingId(req);
 
-    const bookingRef = db
-      .collection("bookings")
-      .doc(id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking ID is required",
+      });
+    }
 
-    const bookingDoc =
-      await bookingRef.get();
+    const {
+      ref: bookingRef,
+      snapshot: bookingDoc,
+    } =
+      await getBookingDocument(
+        id
+      );
 
     if (!bookingDoc.exists) {
       return res.status(404).json({
         success: false,
-        message: "Booking not found",
+        message:
+          "Booking not found",
       });
     }
 
@@ -1202,11 +1537,13 @@ export async function cancelBooking(
       bookingDoc.data() || {};
 
     if (
-      booking.customerId !== customerId
+      booking.customerId !==
+      customerId
     ) {
       return res.status(403).json({
         success: false,
-        message: "Permission denied",
+        message:
+          "Permission denied",
       });
     }
 
@@ -1214,7 +1551,9 @@ export async function cancelBooking(
       [
         "completed",
         "cancelled",
-      ].includes(booking.status)
+      ].includes(
+        booking.status
+      )
     ) {
       return res.status(400).json({
         success: false,
@@ -1223,40 +1562,69 @@ export async function cancelBooking(
       });
     }
 
-    const now = new Date();
+    const now =
+      new Date();
 
     await bookingRef.update({
-      status: "cancelled",
-      updatedAt: now,
+      status:
+        "cancelled",
+
+      updatedAt:
+        now,
     });
 
-    await db.collection("notifications").add({
+    /* =====================================================
+       UPDATE JOB
+    ===================================================== */
+
+    if (booking.jobId) {
+      await db
+        .collection("jobs")
+        .doc(booking.jobId)
+        .update({
+          status:
+            "cancelled",
+
+          updatedAt:
+            now,
+        });
+    }
+
+    await createNotification({
       recipientId:
         booking.workerId,
 
-      type: "booking_cancelled",
+      type:
+        "booking_cancelled",
 
-      title: "Booking Cancelled",
+      title:
+        "Booking Cancelled",
 
       message:
         "Customer cancelled the booking",
 
-      bookingId: id,
+      bookingId:
+        id,
 
       serviceId:
-        booking.serviceId,
+        booking.serviceId ||
+        null,
 
-      isRead: false,
+      jobId:
+        booking.jobId ||
+        null,
 
-      createdAt: now,
+      createdAt:
+        now,
     });
 
     return res.json({
       success: true,
+
       message:
         "Booking cancelled successfully",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
       "CANCEL BOOKING ERROR =",
       error
@@ -1264,7 +1632,9 @@ export async function cancelBooking(
 
     return res.status(500).json({
       success: false,
+
       message:
+        error?.message ||
         "Failed to cancel booking",
     });
   }

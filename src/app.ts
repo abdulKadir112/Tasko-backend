@@ -1,10 +1,6 @@
 import express from "express";
 import cors from "cors";
 
-// =====================================================
-// ROUTES
-// =====================================================
-
 import categoryRoutes from "./routes/category.routes";
 import serviceRoutes from "./routes/service.routes";
 import userRoutes from "./routes/user.routes";
@@ -17,22 +13,14 @@ import chatRoutes from "./routes/chat.routes";
 import messageRoutes from "./routes/message.routes";
 import notificationRoutes from "./routes/notification.routes";
 
-// =====================================================
-// MIDDLEWARE
-// =====================================================
-
 import { notFound } from "./middleware/notFound.middleware";
 import { errorHandler } from "./middleware/error.middleware";
 
-// =====================================================
-// APP
-// =====================================================
-
 const app = express();
 
-// =====================================================
-// CORS
-// =====================================================
+/* =====================================================
+   MIDDLEWARE
+===================================================== */
 
 app.use(
   cors({
@@ -40,15 +28,11 @@ app.use(
   })
 );
 
-// =====================================================
-// BODY PARSER
-// =====================================================
-
 app.use(express.json());
 
-// =====================================================
-// ROOT
-// =====================================================
+/* =====================================================
+   HEALTH CHECK
+===================================================== */
 
 app.get("/", (_req, res) => {
   res.json({
@@ -57,9 +41,9 @@ app.get("/", (_req, res) => {
   });
 });
 
-// =====================================================
-// API ROUTES
-// =====================================================
+/* =====================================================
+   API ROUTES
+===================================================== */
 
 app.use("/api/categories", categoryRoutes);
 
@@ -71,7 +55,26 @@ app.use("/api/jobs", jobRoutes);
 
 app.use("/api/bids", bidRoutes);
 
-// ⭐ BOOKING ROUTES
+/*
+ * IMPORTANT
+ *
+ * Booking routes MUST be mounted here.
+ *
+ * This enables:
+ *
+ * POST   /api/bookings
+ * GET    /api/bookings/customer
+ * GET    /api/bookings/worker
+ * GET    /api/bookings/:id
+ * PUT    /api/bookings/:id/accept
+ * PUT    /api/bookings/:id/reject
+ * PUT    /api/bookings/:id/propose-time
+ * PUT    /api/bookings/:id/confirm
+ * PUT    /api/bookings/:id/start
+ * PUT    /api/bookings/:id/complete
+ * PUT    /api/bookings/:id/cancel
+ */
+
 app.use("/api/bookings", bookingRoutes);
 
 app.use("/api/reviews", reviewRoutes);
@@ -84,15 +87,15 @@ app.use("/api/messages", messageRoutes);
 
 app.use("/api/notifications", notificationRoutes);
 
-// =====================================================
-// 404
-// =====================================================
+/* =====================================================
+   404
+===================================================== */
 
 app.use(notFound);
 
-// =====================================================
-// ERROR HANDLER
-// =====================================================
+/* =====================================================
+   ERROR HANDLER
+===================================================== */
 
 app.use(errorHandler);
 
