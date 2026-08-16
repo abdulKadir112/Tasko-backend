@@ -10,26 +10,19 @@ export const updateProfileSchema = z.object({
     .trim()
     .min(3, "Name must be at least 3 characters"),
 
-  phone: z
-    .string()
-    .trim()
-    .optional(),
+  phone: z.string().trim().optional(),
 
   /**
    * Profile image URL
-   *
-   * Frontend থেকে যদি:
-   * - valid Cloudinary URL আসে → accept
-   * - null আসে → accept
-   * - undefined আসে → accept
-   * - empty string "" আসে → null হিসেবে save হবে
+   * - valid URL → accept
+   * - null / undefined → accept
+   * - "" → null
    */
   photoURL: z.preprocess(
     (value) => {
       if (value === "") {
         return null;
       }
-
       return value;
     },
     z
@@ -40,48 +33,36 @@ export const updateProfileSchema = z.object({
       .optional()
   ),
 
-  address: z
-    .string()
-    .trim()
-    .optional(),
+  address: z.string().trim().optional(),
 
-  city: z
-    .string()
-    .trim()
-    .optional(),
+  city: z.string().trim().optional(),
 
   // =========================================================
   // WORKER PROFILE
   // =========================================================
 
-  category: z
-    .string()
-    .trim()
-    .optional(),
+  category: z.string().trim().optional(),
 
-  skills: z
-    .array(z.string())
-    .optional(),
+  skills: z.array(z.string()).optional(),
 
-  experience: z
-    .coerce
+  experience: z.coerce
     .number()
-    .min(
-      0,
-      "Experience cannot be negative"
-    )
+    .min(0, "Experience cannot be negative")
     .optional(),
 
   about: z
     .string()
     .trim()
-    .max(
-      500,
-      "About must be 500 characters or less"
-    )
+    .max(500, "About must be 500 characters or less")
     .optional(),
+
+  // =========================================================
+  // LOCATION (Worker + optional Customer)
+  // =========================================================
+
+  lat: z.coerce.number().min(-90).max(90).optional(),
+
+  lng: z.coerce.number().min(-180).max(180).optional(),
 });
 
-export type UpdateProfileInput = z.infer<
-  typeof updateProfileSchema
->;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;

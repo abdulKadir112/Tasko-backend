@@ -4,9 +4,7 @@ import { db } from "../config/firebase";
 
 import { AuthRequest } from "../middleware/auth.middleware";
 
-import {
-  updateProfileSchema,
-} from "../validations/user.validation";
+import { updateProfileSchema } from "../validations/user.validation";
 
 // =========================================================
 // GET MY PROFILE
@@ -25,37 +23,28 @@ export async function getMyProfile(
         success: false,
         message: "Unauthorized",
       });
-
       return;
     }
 
-    const doc = await db
-      .collection("users")
-      .doc(uid)
-      .get();
+    const doc = await db.collection("users").doc(uid).get();
 
     if (!doc.exists) {
       res.status(404).json({
         success: false,
         message: "User not found",
       });
-
       return;
     }
 
     res.json({
       success: true,
-
       data: {
         id: doc.id,
         ...doc.data(),
       },
     });
   } catch (error) {
-    console.error(
-      "❌ Get My Profile Error:",
-      error
-    );
+    console.error("❌ Get My Profile Error:", error);
 
     res.status(500).json({
       success: false,
@@ -81,36 +70,16 @@ export async function updateMyProfile(
         success: false,
         message: "Unauthorized",
       });
-
       return;
     }
 
-    console.log(
-      "=========================================="
-    );
+    console.log("==========================================");
+    console.log("👤 UPDATE MY PROFILE");
+    console.log("🆔 UID:", uid);
+    console.log("📦 REQUEST BODY:", req.body);
+    console.log("==========================================");
 
-    console.log(
-      "👤 UPDATE MY PROFILE"
-    );
-
-    console.log(
-      "🆔 UID:",
-      uid
-    );
-
-    console.log(
-      "📦 REQUEST BODY:",
-      req.body
-    );
-
-    console.log(
-      "=========================================="
-    );
-
-    const result =
-      updateProfileSchema.safeParse(
-        req.body
-      );
+    const result = updateProfileSchema.safeParse(req.body);
 
     if (!result.success) {
       console.error(
@@ -120,11 +89,8 @@ export async function updateMyProfile(
 
       res.status(400).json({
         success: false,
-
-        errors:
-          result.error.flatten(),
+        errors: result.error.flatten(),
       });
-
       return;
     }
 
@@ -138,105 +104,68 @@ export async function updateMyProfile(
       skills,
       experience,
       about,
+      lat,
+      lng,
     } = result.data;
 
-    console.log(
-      "✅ PROFILE VALIDATION SUCCESS"
-    );
+    console.log("✅ PROFILE VALIDATION SUCCESS");
+    console.log("👤 Name:", name);
+    console.log("📞 Phone:", phone);
+    console.log("🖼️ Photo URL:", photoURL);
+    console.log("📍 Lat/Lng:", lat, lng);
 
-    console.log(
-      "👤 Name:",
-      name
-    );
+    const payload: Record<string, any> = {
+      name,
+      phone,
+      photoURL: photoURL ?? null,
+      address,
+      city,
+      category,
+      skills,
+      experience,
+      about,
+      updatedAt: new Date(),
+    };
 
-    console.log(
-      "📞 Phone:",
-      phone
-    );
+    // Location update (only when provided)
+    if (typeof lat === "number" && typeof lng === "number") {
+      payload.lat = lat;
+      payload.lng = lng;
+      payload.locationUpdatedAt = new Date();
+    }
 
-    console.log(
-      "🖼️ Photo URL:",
-      photoURL
-    );
+    await db.collection("users").doc(uid).set(payload, {
+      merge: true,
+    });
 
-    await db
-      .collection("users")
-      .doc(uid)
-      .set(
-        {
-          name,
-          phone,
+    console.log("✅ FIRESTORE PROFILE UPDATED");
 
-          photoURL:
-            photoURL ?? null,
-
-          address,
-          city,
-
-          category,
-          skills,
-          experience,
-          about,
-
-          updatedAt:
-            new Date(),
-        },
-        {
-          merge: true,
-        }
-      );
-
-    console.log(
-      "✅ FIRESTORE PROFILE UPDATED"
-    );
-
-    const updatedUser =
-      await db
-        .collection("users")
-        .doc(uid)
-        .get();
+    const updatedUser = await db.collection("users").doc(uid).get();
 
     if (!updatedUser.exists) {
       res.status(404).json({
         success: false,
-        message:
-          "Updated user not found",
+        message: "Updated user not found",
       });
-
       return;
     }
 
     res.json({
       success: true,
-
-      message:
-        "Profile Updated Successfully",
-
+      message: "Profile Updated Successfully",
       data: {
         id: updatedUser.id,
         ...updatedUser.data(),
       },
     });
   } catch (error: any) {
-    console.error(
-      "❌ Update Profile Error:"
-    );
-
-    console.error(
-      "Message:",
-      error?.message
-    );
-
-    console.error(
-      "Error:",
-      error
-    );
+    console.error("❌ Update Profile Error:");
+    console.error("Message:", error?.message);
+    console.error("Error:", error);
 
     res.status(500).json({
       success: false,
-
-      message:
-        "Profile Update Failed",
+      message: "Profile Update Failed",
     });
   }
 }
@@ -244,7 +173,6 @@ export async function updateMyProfile(
 // =========================================================
 // GET ALL WORKERS
 // GET /api/users/workers
-//
 // GET /api/users/workers?category=plumbing
 // =========================================================
 
@@ -253,115 +181,54 @@ export async function getWorkers(
   res: Response
 ): Promise<void> {
   try {
-    const category =
-      req.query.category as string;
+    const category = req.query.category as string;
 
-    let query =
-      db
-        .collection("users")
-        .where(
-          "role",
-          "==",
-          "worker"
-        );
+    let query = db.collection("users").where("role", "==", "worker");
 
     if (category) {
-      query = query.where(
-        "category",
-        "==",
-        category
-      );
+      query = query.where("category", "==", category);
     }
 
-    // orderBy বাদ দেওয়া হয়েছে — composite index এড়ানোর জন্য।
-    // rating অনুযায়ী sort নিচে JS তে করা হচ্ছে।
-    const snapshot =
-      await query.get();
+    const snapshot = await query.get();
 
-    const workers =
-      snapshot.docs.map(
-        (doc) => {
-          const data =
-            doc.data();
+    const workers = snapshot.docs.map((doc) => {
+      const data = doc.data();
 
-          return {
-            id: doc.id,
+      return {
+        id: doc.id,
+        name: data.name ?? "Unknown",
+        email: data.email ?? null,
+        phone: data.phone ?? null,
+        photoURL: data.photoURL ?? null,
+        city: data.city ?? null,
+        category: data.category ?? null,
+        skills: data.skills ?? [],
+        experience: data.experience ?? null,
+        rating: data.rating ?? 0,
+        completedJobs: data.completedJobs ?? 0,
+        totalJobs: data.totalJobs ?? 0,
+        isOnline: data.isOnline ?? false,
 
-            name:
-              data.name ??
-              "Unknown",
+        // distance calculate-এর জন্য
+        lat: typeof data.lat === "number" ? data.lat : null,
+        lng: typeof data.lng === "number" ? data.lng : null,
+        locationUpdatedAt: data.locationUpdatedAt ?? null,
+      };
+    });
 
-            email:
-              data.email ??
-              null,
-
-            phone:
-              data.phone ??
-              null,
-
-            photoURL:
-              data.photoURL ??
-              null,
-
-            city:
-              data.city ??
-              null,
-
-            category:
-              data.category ??
-              null,
-
-            skills:
-              data.skills ??
-              [],
-
-            experience:
-              data.experience ??
-              null,
-
-            rating:
-              data.rating ??
-              0,
-
-            completedJobs:
-              data.completedJobs ??
-              0,
-
-            totalJobs:
-              data.totalJobs ??
-              0,
-
-            isOnline:
-              data.isOnline ??
-              false,
-          };
-        }
-      );
-
-    workers.sort(
-      (a, b) => (b.rating ?? 0) - (a.rating ?? 0)
-    );
+    workers.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
 
     res.json({
       success: true,
-
-      total:
-        workers.length,
-
-      data:
-        workers,
+      total: workers.length,
+      data: workers,
     });
   } catch (error) {
-    console.error(
-      "❌ Get Workers Error:",
-      error
-    );
+    console.error("❌ Get Workers Error:", error);
 
     res.status(500).json({
       success: false,
-
-      message:
-        "Failed to fetch workers",
+      message: "Failed to fetch workers",
     });
   }
 }
@@ -376,127 +243,68 @@ export async function getWorkerById(
   res: Response
 ): Promise<void> {
   try {
-    const id =
-      req.params.id as string;
+    const id = req.params.id as string;
 
     if (!id) {
       res.status(400).json({
         success: false,
-
-        message:
-          "Worker id is required",
+        message: "Worker id is required",
       });
-
       return;
     }
 
-    const doc =
-      await db
-        .collection("users")
-        .doc(id)
-        .get();
+    const doc = await db.collection("users").doc(id).get();
 
     if (!doc.exists) {
       res.status(404).json({
         success: false,
-
-        message:
-          "Worker not found",
+        message: "Worker not found",
       });
-
       return;
     }
 
-    const worker =
-      doc.data();
+    const worker = doc.data();
 
-    if (
-      worker?.role !==
-      "worker"
-    ) {
+    if (worker?.role !== "worker") {
       res.status(404).json({
         success: false,
-
-        message:
-          "Worker not found",
+        message: "Worker not found",
       });
-
       return;
     }
 
     const workerData = {
       id: doc.id,
+      name: worker.name ?? "Unknown",
+      email: worker.email ?? null,
+      phone: worker.phone ?? null,
+      photoURL: worker.photoURL ?? null,
+      city: worker.city ?? null,
+      category: worker.category ?? null,
+      skills: worker.skills ?? [],
+      experience: worker.experience ?? null,
+      rating: worker.rating ?? 0,
+      completedJobs: worker.completedJobs ?? 0,
+      totalJobs: worker.totalJobs ?? 0,
+      isOnline: worker.isOnline ?? false,
+      about: worker.about ?? null,
+      price: worker.price ?? null,
 
-      name:
-        worker.name ??
-        "Unknown",
-
-      email:
-        worker.email ??
-        null,
-
-      phone:
-        worker.phone ??
-        null,
-
-      photoURL:
-        worker.photoURL ??
-        null,
-
-      city:
-        worker.city ??
-        null,
-
-      category:
-        worker.category ??
-        null,
-
-      skills:
-        worker.skills ??
-        [],
-
-      experience:
-        worker.experience ??
-        null,
-
-      rating:
-        worker.rating ??
-        0,
-
-      completedJobs:
-        worker.completedJobs ??
-        0,
-
-      totalJobs:
-        worker.totalJobs ??
-        0,
-
-      isOnline:
-        worker.isOnline ??
-        false,
-
-      about:
-        worker.about ??
-        null,
+      lat: typeof worker.lat === "number" ? worker.lat : null,
+      lng: typeof worker.lng === "number" ? worker.lng : null,
+      locationUpdatedAt: worker.locationUpdatedAt ?? null,
     };
 
     res.json({
       success: true,
-
-      data:
-        workerData,
+      data: workerData,
     });
   } catch (error) {
-    console.error(
-      "❌ Get Worker Error:",
-      error
-    );
+    console.error("❌ Get Worker Error:", error);
 
     res.status(500).json({
       success: false,
-
-      message:
-        "Failed to fetch worker",
+      message: "Failed to fetch worker",
     });
   }
 }
@@ -504,8 +312,6 @@ export async function getWorkerById(
 // =========================================================
 // GET ANY USER BY UID
 // GET /api/users/:uid
-//
-// Customer অথবা Worker
 // =========================================================
 
 export async function getUserById(
@@ -513,85 +319,49 @@ export async function getUserById(
   res: Response
 ): Promise<void> {
   try {
-    const uid =
-      req.params.uid as string;
+    const uid = req.params.uid as string;
 
     if (!uid) {
       res.status(400).json({
         success: false,
-
-        message:
-          "User ID is required",
+        message: "User ID is required",
       });
-
       return;
     }
 
-    console.log(
-      "👤 Get User By UID:",
-      uid
-    );
+    console.log("👤 Get User By UID:", uid);
 
-    const doc =
-      await db
-        .collection("users")
-        .doc(uid)
-        .get();
+    const doc = await db.collection("users").doc(uid).get();
 
     if (!doc.exists) {
-      console.log(
-        "❌ User not found:",
-        uid
-      );
+      console.log("❌ User not found:", uid);
 
       res.status(404).json({
         success: false,
-
-        message:
-          "User not found",
+        message: "User not found",
       });
-
       return;
     }
 
-    const user =
-      doc.data();
+    const user = doc.data();
 
-    console.log(
-      "✅ User found:",
-      uid
-    );
+    console.log("✅ User found:", uid);
 
     res.json({
       success: true,
-
       data: {
         id: doc.id,
-
-        name:
-          user?.name ??
-          "Unknown",
-
-        photoURL:
-          user?.photoURL ??
-          null,
-
-        isOnline:
-          user?.isOnline ??
-          false,
+        name: user?.name ?? "Unknown",
+        photoURL: user?.photoURL ?? null,
+        isOnline: user?.isOnline ?? false,
       },
     });
   } catch (error) {
-    console.error(
-      "❌ Get User By ID Error:",
-      error
-    );
+    console.error("❌ Get User By ID Error:", error);
 
     res.status(500).json({
       success: false,
-
-      message:
-        "Failed to fetch user",
+      message: "Failed to fetch user",
     });
   }
 }
