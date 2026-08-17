@@ -69,238 +69,11 @@ async function createNotification(data: {
 }
 
 /* =========================================================
-   CREATE DIRECT WORKER BOOKING  (⭐ NEW — ROOT CAUSE FIX)
-   ---------------------------------------------------------
-   BookWorkerScreen.tsx থেকে যখন customer সরাসরি একজন
-   worker-কে বুক করে (কোনো published service বা bid ছাড়াই),
-   তখন এই endpoint কল হবে। আগে এই ফ্লো শুধু createJob()
-   কল করত — যেটা "jobs" কালেকশনে একটা entry তৈরি করত,
-   কিন্তু "bookings" কালেকশনে কিছুই তৈরি করত না। ফলে worker-এর
-   Bookings ট্যাবে (যেটা শুধু "bookings" কালেকশন থেকে ডেটা
-   নেয়, getWorkerBookings() মাধ্যমে) কখনো এই booking দেখা
-   যেত না — এটাই "booking list e kono data nai" সমস্যার
-   আসল কারণ।
-
-   এই ফাংশন সরাসরি "bookings" কালেকশনে entry তৈরি করে, যাতে
-   worker-এর স্বাভাবিক accept/reject/schedule/start/complete
-   পাইপলাইনেই এই booking স্বাভাবিকভাবে চলে আসে।
-========================================================= */
-
-export async function createDirectBooking(
-  req: AuthRequest,
-  res: Response
-) {
-  try {
-    const customerId = getUid(req);
-
-    if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized",
-      });
-    }
-
-    const {
-      workerId: rawWorkerId,
-      title,
-      description,
-      budget,
-      address,
-      phone,
-      city,
-      category,
-      urgency,
-    } = req.body || {};
-
-    const workerId = String(rawWorkerId || "").trim();
-
-    if (!workerId) {
-      return res.status(400).json({
-        success: false,
-        message: "Worker ID is required",
-      });
-    }
-
-    if (workerId === customerId) {
-      return res.status(400).json({
-        success: false,
-        message: "You cannot book yourself",
-      });
-    }
-
-    if (!title || !String(title).trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Title is required",
-      });
-    }
-
-    if (!description || !String(description).trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
-    }
-
-    if (!address || !String(address).trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Address is required",
-      });
-    }
-
-    const numericBudget = Number(budget);
-
-    if (!Number.isFinite(numericBudget) || numericBudget <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid budget is required",
-      });
-    }
-
-    /* =====================================================
-       WORKER MUST EXIST
-    ===================================================== */
-
-    const workerDoc = await db
-      .collection("users")
-      .doc(workerId)
-      .get();
-
-    if (!workerDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: "Worker not found",
-      });
-    }
-
-    const now = new Date();
-
-    /*
-     * ⭐ NOTE: Booking schema-তে সরাসরি address/phone/urgency
-     * ফিল্ড ছিল না (নিচে booking object-এ যোগ করা হলো),
-     * তাই সেগুলো customerMessage-এর ভেতরেও readable ভাবে
-     * জুড়ে দেওয়া হচ্ছে — যাতে পুরনো UI code (যদি শুধু
-     * customerMessage পড়ে) থেকেও তথ্য হারায় না।
-     */
-
-    const messageParts = [String(description).trim()];
-
-    if (phone && String(phone).trim()) {
-      messageParts.push(`📞 Contact: ${String(phone).trim()}`);
-    }
-
-    if (urgency === "urgent") {
-      messageParts.push("⚡ Urgent request");
-    }
-
-    const booking = {
-      jobId: null,
-      serviceId: null,
-
-      workerId,
-      customerId,
-
-      serviceTitle: String(title).trim(),
-
-      category: String(category || "General"),
-
-      price: numericBudget,
-
-      requestedDate: null,
-
-      customerMessage: messageParts.join(" | "),
-
-      /*
-       * ⭐ নতুন ফিল্ড — direct booking-এর জন্য
-       */
-      address: String(address).trim(),
-
-      city: String(city || ""),
-
-      urgency: urgency === "urgent" ? "urgent" : "normal",
-
-      status: "pending" as BookingStatus,
-
-      workerAcceptedAt: null,
-      workerRejectedAt: null,
-
-      workerMessage: null,
-
-      proposedDate: null,
-      proposedStartTime: null,
-      proposedEndTime: null,
-
-      customerConfirmedAt: null,
-
-      confirmedDate: null,
-      confirmedStartTime: null,
-      confirmedEndTime: null,
-
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const bookingRef = await db
-      .collection("bookings")
-      .add(booking);
-
-    /* =====================================================
-       NOTIFICATION
-    ===================================================== */
-
-    try {
-      await createNotification({
-        recipientId: workerId,
-
-        type: "new_booking",
-
-        title: "New Direct Booking",
-
-        message: `You received a new direct booking request: "${booking.serviceTitle}"`,
-
-        bookingId: bookingRef.id,
-
-        serviceId: null,
-        jobId: null,
-
-        createdAt: now,
-      });
-    } catch (notificationError) {
-      console.error(
-        "DIRECT BOOKING NOTIFICATION ERROR =",
-        notificationError
-      );
-
-      /*
-       * Notification fail হলেও booking সফলভাবে তৈরি
-       * হয়েছে, তাই পুরো request fail করব না।
-       */
-    }
-
-    return res.status(201).json({
-      success: true,
-
-      message: "Booking sent directly to worker",
-
-      data: {
-        id: bookingRef.id,
-        ...booking,
-      },
-    });
-  } catch (error: any) {
-    console.error("CREATE DIRECT BOOKING ERROR =", error);
-
-    return res.status(500).json({
-      success: false,
-
-      message: error?.message || "Failed to create booking",
-    });
-  }
-}
-
-/* =========================================================
    CREATE SERVICE BOOKING
+   ---------------------------------------------------------
+   ⭐ FIXED: এখন address/phone/urgency (optional) ফিল্ডও
+   গ্রহণ করে — BookWorkerScreen.tsx এই তথ্যগুলো সংগ্রহ করে,
+   আগে সেগুলো কোথাও সেভই হতো না।
 ========================================================= */
 
 export async function createBooking(
@@ -321,6 +94,9 @@ export async function createBooking(
       serviceId: rawServiceId,
       requestedDate,
       customerMessage,
+      address,
+      phone,
+      urgency,
     } = req.body || {};
 
     const serviceId = String(rawServiceId || "").trim();
@@ -407,6 +183,27 @@ export async function createBooking(
 
     const now = new Date();
 
+    /*
+     * ⭐ NEW: customerMessage-এর সাথে phone/urgency জুড়ে
+     * দেওয়া হচ্ছে, যাতে worker সব তথ্য এক জায়গায় দেখতে
+     * পায় — booking schema-তে আলাদা ফিল্ডও (address,
+     * urgency) রাখা হচ্ছে নিচে।
+     */
+
+    const messageParts: string[] = [];
+
+    if (customerMessage && String(customerMessage).trim()) {
+      messageParts.push(String(customerMessage).trim());
+    }
+
+    if (phone && String(phone).trim()) {
+      messageParts.push(`📞 Contact: ${String(phone).trim()}`);
+    }
+
+    if (urgency === "urgent") {
+      messageParts.push("⚡ Urgent request");
+    }
+
     const booking = {
       jobId: null,
 
@@ -424,9 +221,17 @@ export async function createBooking(
 
       requestedDate: requestedDate ? String(requestedDate) : null,
 
-      customerMessage: customerMessage
-        ? String(customerMessage)
-        : "",
+      customerMessage: messageParts.join(" | "),
+
+      /*
+       * ⭐ NEW FIELDS
+       */
+      address:
+        address && String(address).trim()
+          ? String(address).trim()
+          : null,
+
+      urgency: urgency === "urgent" ? "urgent" : "normal",
 
       status: "pending" as BookingStatus,
 
