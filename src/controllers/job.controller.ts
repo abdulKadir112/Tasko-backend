@@ -1,7 +1,10 @@
+// backend/src/controllers/job.controller.ts
+
 import { Response } from "express";
 import { db } from "../config/firebase";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { createJobSchema } from "../validations/job.validation";
+import { createNotifications } from "../services/notification.service";
 
 /* =========================================================
    CREATE JOB
@@ -29,7 +32,10 @@ export async function createJob(
 
     const result = createJobSchema.safeParse(req.body);
 
-    console.log("STEP 2 - Validation =", result.success);
+    console.log(
+      "STEP 2 - Validation =",
+      result.success
+    );
 
     if (!result.success) {
       console.log(
@@ -112,6 +118,155 @@ export async function createJob(
       docRef.id
     );
 
+    /* =====================================================
+       STEP 5 - JOB NOTIFICATION
+
+       IMPORTANT:
+       Notification fail হলেও Job creation fail হবে না.
+       কারণ Job আগে successfully save হয়েছে.
+    ===================================================== */
+
+    try {
+      const notificationTargets: string[] = [];
+
+      /* ===================================================
+         CASE 1:
+         যদি customer নির্দিষ্ট workerId দিয়ে job create করে
+         =================================================== */
+
+      if (workerId) {
+        notificationTargets.push(
+          String(workerId)
+        );
+      }
+
+      /* ===================================================
+         CASE 2:
+         workerId না থাকলে matching workers খুঁজব
+
+         Worker profile:
+         users/{uid}
+
+         skills:
+         ["Electrician", "AC Repair", ...]
+         =================================================== */
+
+      if (!workerId) {
+        const workersSnapshot = await db
+          .collection("users")
+          .where("role", "==", "worker")
+          .get();
+
+        const normalizedCategory =
+          String(category || "")
+            .trim()
+            .toLowerCase();
+
+        workersSnapshot.docs.forEach(
+          (workerDoc) => {
+            const workerData =
+              workerDoc.data() || {};
+
+            const workerUid =
+              workerDoc.id;
+
+            /* ---------------------------------------------
+               নিজের job-এর জন্য নিজের কাছে notification
+               পাঠানো হবে না
+            --------------------------------------------- */
+
+            if (workerUid === uid) {
+              return;
+            }
+
+            const rawSkills =
+              Array.isArray(workerData.skills)
+                ? workerData.skills
+                : [];
+
+            const workerSkills =
+              rawSkills
+                .map((skill: any) =>
+                  String(skill)
+                    .trim()
+                    .toLowerCase()
+                )
+                .filter(Boolean);
+
+            /* ---------------------------------------------
+               Worker-এর skill-এর সাথে job category match
+            --------------------------------------------- */
+
+            const hasMatchingSkill =
+              workerSkills.includes(
+                normalizedCategory
+              );
+
+            if (hasMatchingSkill) {
+              notificationTargets.push(
+                workerUid
+              );
+            }
+          }
+        );
+      }
+
+      /* ===================================================
+         Duplicate worker ID remove
+         =================================================== */
+
+      const uniqueWorkerIds =
+        Array.from(
+          new Set(
+            notificationTargets.filter(Boolean)
+          )
+        );
+
+      /* ===================================================
+         Notification create
+         =================================================== */
+
+      if (uniqueWorkerIds.length > 0) {
+        await createNotifications(
+          uniqueWorkerIds.map(
+            (workerUid) => ({
+              userId: workerUid,
+
+              title: "নতুন কাজ এসেছে",
+
+              body: `${title} - ${city} এলাকায় একটি নতুন কাজ পোস্ট করা হয়েছে।`,
+
+              type: "job",
+
+              jobId: docRef.id,
+            })
+          )
+        );
+
+        console.log(
+          "STEP 5 - Job notifications created =",
+          uniqueWorkerIds.length
+        );
+      } else {
+        console.log(
+          "STEP 5 - No matching workers found"
+        );
+      }
+    } catch (notificationError) {
+      /*
+       * Notification system কখনোই Job creation
+       * block করবে না।
+       */
+      console.error(
+        "JOB NOTIFICATION ERROR =>",
+        notificationError
+      );
+    }
+
+    /* =====================================================
+       FINAL RESPONSE
+    ===================================================== */
+
     return res.status(201).json({
       success: true,
       message: "Job Created Successfully",
@@ -180,7 +335,9 @@ export async function getJobById(
   res: Response
 ) {
   try {
-    const id = String(req.params.id || "").trim();
+    const id = String(
+      req.params.id || ""
+    ).trim();
 
     if (!id) {
       return res.status(400).json({
@@ -282,7 +439,9 @@ export async function addJobView(
       });
     }
 
-    const id = String(req.params.id || "").trim();
+    const id = String(
+      req.params.id || ""
+    ).trim();
 
     if (!id) {
       return res.status(400).json({
@@ -365,7 +524,9 @@ export async function updateJob(
       });
     }
 
-    const id = String(req.params.id || "").trim();
+    const id = String(
+      req.params.id || ""
+    ).trim();
 
     if (!id) {
       return res.status(400).json({
@@ -517,7 +678,8 @@ export async function updateJob(
 
     return res.json({
       success: true,
-      message: "Job Updated Successfully",
+      message:
+        "Job Updated Successfully",
       data: {
         id: updatedDoc.id,
         ...updatedDoc.data(),
@@ -556,7 +718,9 @@ export async function deleteJob(
       });
     }
 
-    const id = String(req.params.id || "").trim();
+    const id = String(
+      req.params.id || ""
+    ).trim();
 
     if (!id) {
       return res.status(400).json({
@@ -595,7 +759,8 @@ export async function deleteJob(
 
     return res.json({
       success: true,
-      message: "Job Deleted Successfully",
+      message:
+        "Job Deleted Successfully",
     });
   } catch (error) {
     console.error(
@@ -714,7 +879,9 @@ export async function getCustomerJobs(
           ? aValue.toMillis()
           : aValue?.toDate
           ? aValue.toDate().getTime()
-          : new Date(aValue || 0).getTime();
+          : new Date(
+              aValue || 0
+            ).getTime();
 
       const bTime =
         typeof bValue?.toMillis ===
@@ -722,7 +889,9 @@ export async function getCustomerJobs(
           ? bValue.toMillis()
           : bValue?.toDate
           ? bValue.toDate().getTime()
-          : new Date(bValue || 0).getTime();
+          : new Date(
+              bValue || 0
+            ).getTime();
 
       return bTime - aTime;
     });

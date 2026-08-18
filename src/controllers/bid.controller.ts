@@ -6,6 +6,9 @@ import {
   createChatRoom,
   getChatRoom,
 } from "../services/chat.service";
+import {
+  createNotification,
+} from "../services/notification.service";
 
 /* =========================================================
    CREATE BID
@@ -140,6 +143,35 @@ export async function createBid(
 
       updatedAt: now,
     });
+
+    /* =====================================================
+       NOTIFICATION
+       Worker bid করলে Customer notification পাবে
+    ===================================================== */
+    try {
+      if (job.customerId) {
+        await createNotification({
+          userId: String(job.customerId),
+          title: "নতুন Bid এসেছে",
+          body: `"${job.title || "আপনার কাজ"}" এ একজন Worker নতুন Bid দিয়েছে।`,
+          type: "bid",
+          jobId,
+          bidId: docRef.id,
+        });
+        console.log(
+          "BID NOTIFICATION CREATED"
+        );
+      }
+    } catch (notificationError) {
+      /*
+       * Notification fail হলেও
+       * Bid creation fail হবে না।
+       */
+      console.error(
+        "CREATE BID NOTIFICATION ERROR =",
+        notificationError
+      );
+    }
 
     /* =====================================================
        RESPONSE
@@ -727,34 +759,32 @@ export async function acceptBid(
 
     /* =====================================================
        NOTIFICATION
+       Customer bid accept করলে Worker notification পাবে
     ===================================================== */
-
     try {
-      await db
-        .collection("notifications")
-        .add({
-          recipientId:
-            bid.workerId,
-
-          type:
-            "bid_accepted",
-
-          title:
-            "Your Bid Was Accepted",
-
-          message:
-            `Your bid for "${job.title || "Job"}" was accepted.`,
-
-          jobId:
-            bid.jobId,
-
-          bookingId,
-
-          createdAt: now,
-
-          isRead: false,
+      if (bid.workerId) {
+        await createNotification({
+          userId: String(
+            bid.workerId
+          ),
+          title: "আপনার Bid গ্রহণ করা হয়েছে",
+          body: `"${job.title || "Job"}" কাজের জন্য আপনার Bid গ্রহণ করা হয়েছে। Booking তৈরি হয়েছে।`,
+          type: "booking",
+          jobId: bid.jobId,
+          bidId,
+          bookingId:
+            bookingId || undefined,
         });
+        console.log(
+          "BID ACCEPT NOTIFICATION CREATED"
+        );
+      }
     } catch (notificationError) {
+      /*
+       * Booking/Job সফল হলেও
+       * notification failure-এর কারণে
+       * পুরো request fail হবে না।
+       */
       console.error(
         "BID ACCEPT NOTIFICATION ERROR =",
         notificationError
@@ -871,6 +901,37 @@ export async function rejectBid(
       status: "rejected",
       updatedAt: new Date(),
     });
+
+    /* =====================================================
+       NOTIFICATION
+       Customer bid reject করলে Worker notification পাবে
+    ===================================================== */
+    try {
+      if (bid.workerId) {
+        await createNotification({
+          userId: String(
+            bid.workerId
+          ),
+          title: "আপনার Bid বাতিল করা হয়েছে",
+          body: `"${job.title || "Job"}" কাজের জন্য আপনার Bid গ্রহণ করা হয়নি।`,
+          type: "bid",
+          jobId: bid.jobId,
+          bidId,
+        });
+        console.log(
+          "BID REJECT NOTIFICATION CREATED"
+        );
+      }
+    } catch (notificationError) {
+      /*
+       * Notification fail হলেও
+       * Bid rejection সফল থাকবে।
+       */
+      console.error(
+        "REJECT BID NOTIFICATION ERROR =",
+        notificationError
+      );
+    }
 
     res.json({
       success: true,
