@@ -1,25 +1,22 @@
-// import { seedCategories } from "./categories.seed";
-// import { seedServices } from "./services.seed";
-// import { seedWorkers } from "./workers.seed";
+import { seedCategories } from "./categories.seed";
+import { seedServices } from "./services.seed";
+import { seedWorkers } from "./workers.seed";
 
-// async function seedDatabase() {
-//   try {
-//     console.log("Starting Seeder...\n");
+async function seedDatabase() {
+  try {
+    console.log("Starting Seeder...\n");
 
-//     await seedCategories();
+    await seedCategories();
+    await seedServices();
+    await seedWorkers();
 
-//     await seedServices();
+    console.log("\nDatabase Seed Successful ✅");
 
-//     await seedWorkers();
+    process.exit(0);
+  } catch (error) {
+    console.error("Seeder Error:", error);
+    process.exit(1);
+  }
+}
 
-//     console.log("\nDatabase Seed Successful ✅");
-
-//     process.exit(0);
-//   } catch (error) {
-//     console.error("Seeder Error:", error);
-
-//     process.exit(1);
-//   }
-// }
-
-// seedDatabase();
+seedDatabase();
