@@ -1,6 +1,7 @@
 import { db } from "../config/firebase";
 
 const categories = [
+  // --- আপনার আগের ক্যাটাগরিগুলো ---
   {
     id: "electric",
     title: "Electric",
@@ -56,6 +57,64 @@ const categories = [
     emoji: "🏠",
     icon: "home",
     color: "#F5F3FF",
+  },
+
+  // --- নতুন প্রয়োজনীয় ক্যাটাগরিগুলো ---
+  {
+    id: "appliance-repair",
+    title: "Appliance Repair",
+    emoji: "🔌",
+    icon: "hardware-chip",
+    color: "#FEF3C7", // ফ্রিজ, ওভেন, ওয়াশিং মেশিন মেরামত
+  },
+  {
+    id: "pest-control",
+    title: "Pest Control",
+    emoji: "🪳",
+    icon: "bug",
+    color: "#FEE2E2", // পোকা-মাকড় দমন
+  },
+  {
+    id: "carpenter",
+    title: "Carpenter",
+    emoji: "🪚",
+    icon: "hammer",
+    color: "#FFEDD5", // কাঠ মিস্ত্রি
+  },
+  {
+    id: "laundry",
+    title: "Laundry & Dry Clean",
+    emoji: "🧺",
+    icon: "shirt",
+    color: "#FCE7F3", // কাপড় ধোয়া ও আইরন
+  },
+  {
+    id: "beauty-salon",
+    title: "Beauty & Salon",
+    emoji: "✂️",
+    icon: "cut",
+    color: "#FDF2F8", // পার্লার ও সেলুন সার্ভিস
+  },
+  {
+    id: "shifting-mover",
+    title: "Shifting & Movers",
+    emoji: "📦",
+    icon: "cube",
+    color: "#E0E7FF", // বাসা বা অফিস বদল
+  },
+  {
+    id: "cctv-security",
+    title: "CCTV & Security",
+    emoji: "📹",
+    icon: "videocam",
+    color: "#F1F5F9", // সিকিউরিটি ক্যামেরা সেটআপ
+  },
+  {
+    id: "gardening",
+    title: "Gardening",
+    emoji: "🪴",
+    icon: "leaf",
+    color: "#DCFCE7", // বাগান পরিচর্যা
   },
 ];
 
