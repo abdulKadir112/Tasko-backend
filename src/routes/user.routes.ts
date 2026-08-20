@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   getMyProfile,
   updateMyProfile,
+  saveFcmToken,
   getWorkers,
   getWorkerById,
   getUserById,
@@ -65,6 +66,17 @@ router.put(
   "/me",
   verifyToken,
   updateMyProfile
+);
+
+/**
+ * SAVE / UPDATE FCM TOKEN FOR PUSH NOTIFICATION
+ *
+ * POST /api/users/fcm-token
+ */
+router.post(
+  "/fcm-token",
+  verifyToken,
+  saveFcmToken
 );
 
 // =========================================================

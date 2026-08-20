@@ -315,6 +315,59 @@ export async function updateMyProfile(
 }
 
 // =========================================================
+// SAVE / UPDATE FCM TOKEN FOR PUSH NOTIFICATIONS
+// POST /api/users/fcm-token
+// =========================================================
+
+export async function saveFcmToken(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const uid = req.user?.uid;
+    const { fcmToken } = req.body;
+
+    if (!uid) {
+      res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+      return;
+    }
+
+    if (!fcmToken) {
+      res.status(400).json({
+        success: false,
+        message: "fcmToken is required",
+      });
+      return;
+    }
+
+    await db.collection("users").doc(uid).set(
+      {
+        fcmToken,
+        fcmTokenUpdatedAt: new Date(),
+      },
+      { merge: true }
+    );
+
+    console.log(`✅ FCM Token updated for user: ${uid}`);
+
+    res.json({
+      success: true,
+      message: "FCM Token saved successfully",
+    });
+  } catch (error: any) {
+    console.error("❌ Save FCM Token Error:", error?.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to save FCM token",
+    });
+  }
+}
+
+// =========================================================
 // GET ALL WORKERS
 // GET /api/users/workers
 // GET /api/users/workers?category=plumbing

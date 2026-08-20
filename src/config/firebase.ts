@@ -19,6 +19,11 @@ import {
   getStorage,
 } from "firebase-admin/storage";
 
+// Push Notification এর জন্য getMessaging ইম্পোর্ট করা হলো
+import {
+  getMessaging,
+} from "firebase-admin/messaging";
+
 /* =========================================================
    ENV
 ========================================================= */
@@ -234,6 +239,10 @@ export const auth =
 
 export const storage =
   getStorage();
+
+// Push Notification এর জন্য Messaging Service Export করা হলো
+export const messaging =
+  getMessaging();
 
 /* =========================================================
    FIRESTORE SETTINGS
